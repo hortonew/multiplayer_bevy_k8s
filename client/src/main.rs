@@ -48,7 +48,6 @@ fn new_renet_client() -> (RenetClient, NetcodeClientTransport) {
 }
 
 fn main() {
-    println!("Usage: run with \"server\" or \"client\" argument");
     let mut app = App::new();
     app.add_plugins(DefaultPlugins);
     app.init_resource::<Lobby>();
@@ -82,7 +81,7 @@ fn client_sync_players(
         let server_message = bincode::deserialize(&message).unwrap();
         match server_message {
             ServerMessages::PlayerConnected { id } => {
-                println!("Player {} connected.", id);
+                info!("Player {} connected.", id);
                 let player_entity = commands
                     .spawn((
                         Mesh3d(meshes.add(Cuboid::from_size(Vec3::splat(1.0)))),
@@ -94,7 +93,7 @@ fn client_sync_players(
                 lobby.players.insert(id, player_entity);
             }
             ServerMessages::PlayerDisconnected { id } => {
-                println!("Player {} disconnected.", id);
+                info!("Player {} disconnected.", id);
                 if let Some(player_entity) = lobby.players.remove(&id) {
                     commands.entity(player_entity).despawn();
                 }

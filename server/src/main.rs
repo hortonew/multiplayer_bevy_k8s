@@ -1,4 +1,5 @@
 use bevy::input::InputPlugin;
+use bevy::log::LogPlugin;
 use bevy::time::TimePlugin;
 use bevy::{app::ScheduleRunnerPlugin, prelude::*};
 use bevy_renet::RenetServerPlugin;
@@ -66,6 +67,7 @@ fn main() {
         TaskPoolPlugin {
             task_pool_options: Default::default(),
         },
+        LogPlugin::default(),
     ));
 
     app.add_plugins(ScheduleRunnerPlugin::run_loop(Duration::from_secs_f64(1.0 / 60.0)));
@@ -96,7 +98,7 @@ fn server_update_system(
     for event in server_events.read() {
         match event {
             ServerEvent::ClientConnected { client_id } => {
-                println!("Player {} connected.", client_id);
+                info!("Player {} connected.", client_id);
                 // Spawn player cube
                 let player_entity = commands
                     .spawn((Transform::from_xyz(0.0, 0.5, 0.0),))
@@ -117,7 +119,7 @@ fn server_update_system(
                 server.broadcast_message(DefaultChannel::ReliableOrdered, message);
             }
             ServerEvent::ClientDisconnected { client_id, reason } => {
-                println!("Player {} disconnected: {}", client_id, reason);
+                info!("Player {} disconnected: {}", client_id, reason);
                 if let Some(player_entity) = lobby.players.remove(client_id) {
                     commands.entity(player_entity).despawn();
                 }
