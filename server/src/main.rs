@@ -6,10 +6,10 @@ use bevy_renet::RenetServerPlugin;
 use bevy_renet::netcode::{NetcodeServerPlugin, NetcodeServerTransport, NetcodeTransportError, ServerAuthentication, ServerConfig};
 use bevy_renet::renet::{ClientId, ConnectionConfig, DefaultChannel, RenetServer, ServerEvent};
 use core::time::Duration;
+use serde::{Deserialize, Serialize};
+use std::env;
 use std::time::SystemTime;
 use std::{collections::HashMap, net::UdpSocket};
-
-use serde::{Deserialize, Serialize};
 
 const PROTOCOL_ID: u64 = 7;
 
@@ -40,7 +40,12 @@ enum ServerMessages {
 }
 
 fn new_renet_server() -> (RenetServer, NetcodeServerTransport) {
-    let public_addr = "0.0.0.0:5000".parse().unwrap();
+    let port: u16 = env::var("SERVER_PORT")
+        .unwrap_or_else(|_| "5000".to_string()) // Default to 5000
+        .parse()
+        .expect("Failed to parse SERVER_PORT as a number");
+    info!("Server listening on port: {}", port);
+    let public_addr = format!("0.0.0.0:{}", port).parse().unwrap();
     let socket = UdpSocket::bind(public_addr).unwrap();
     let current_time = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap();
     let server_config = ServerConfig {
