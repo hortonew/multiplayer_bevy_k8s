@@ -4,15 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-bevy = { version = "0.15", default-features = false, features = [
-    "bevy_core_pipeline", # Default rendering pipeline
-    "bevy_pbr",           # PBR materials and lighting
-    "bevy_asset",         # Asset management (meshes, materials)
-    "bevy_scene",         # Scene handling
-    "bevy_gltf",          # Loading glTF models
-    "bevy_text",          # Required if using text-based UI debugging
-    "multi_threaded",     # Server should be multi-threaded
-] }
+bevy = { version = "0.15", default-features = false }
 bevy_renet = "1.0"
 bincode = "1.3"
 serde = { version = "1", features = ["derive"] }
