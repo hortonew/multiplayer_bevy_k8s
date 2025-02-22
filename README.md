@@ -1,4 +1,6 @@
-# Example: Bevy Multiplayer Game on Kubernetes
+# Multiplayer Game in Bevy on Kubernetes
+
+The example "game" was taken from the [bevy_renet examples](https://github.com/lucaspoffo/renet/tree/master/bevy_renet/examples).
 
 ## Local
 
@@ -17,5 +19,3 @@ docker run -it --rm -p 5000:5000/tcp -p 5000:5000/udp multiplayer-bevy-server:la
 # client
 cargo run -p client
 ```
-
-## Remote
