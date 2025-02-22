@@ -1,4 +1,4 @@
-.PHONY: build-release test build-server-container run-server clean doc start-kind stop-kind
+.PHONY: build-release test build-server-container run-server clean doc start-kind stop-kind server client
 
 BINARY_NAME := server
 CONTAINER_NAME := multiplayer-bevy-server
@@ -52,3 +52,11 @@ stop-kind:
 
 doc:
 	cargo doc --no-deps --open
+
+server:
+	cargo build --release -p server
+	./target/release/server
+
+client:
+	cargo build --release -p client
+	./target/release/client

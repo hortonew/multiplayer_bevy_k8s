@@ -12,7 +12,6 @@ use std::time::SystemTime;
 use std::{collections::HashMap, net::UdpSocket};
 
 const PROTOCOL_ID: u64 = 7;
-const PLAYER_MOVE_SPEED: f32 = 1.0;
 
 #[derive(Debug, Default, Serialize, Deserialize, Component, Resource)]
 struct PlayerInput {
@@ -43,12 +42,27 @@ enum ServerMessages {
     PlayerDisconnected { id: ClientId },
 }
 
+// New resource holding server settings.
+#[derive(Resource, Clone)]
+struct ServerSettings {
+    port: u16,
+    max_clients: u32,
+    player_move_speed: f32,
+}
+
+impl Default for ServerSettings {
+    fn default() -> Self {
+        Self {
+            port: env::var("SERVER_PORT").ok().and_then(|s| s.parse().ok()).unwrap_or(5000),
+            max_clients: 64,
+            player_move_speed: 1.0,
+        }
+    }
+}
+
 /// Run bevy server
 fn main() {
     let mut app = App::new();
-    let (renet_server, renet_transport) = new_renet_server();
-
-    // minimal plugins to work in a windowless environment
     app.add_plugins((
         TimePlugin,
         InputPlugin,
@@ -57,33 +71,34 @@ fn main() {
             task_pool_options: Default::default(),
         },
         LogPlugin::default(),
-    ))
-    .add_plugins(ScheduleRunnerPlugin::run_loop(Duration::from_secs_f64(1.0 / 60.0)))
-    .init_resource::<Lobby>()
-    .add_plugins((RenetServerPlugin, NetcodeServerPlugin))
-    .insert_resource(renet_server)
-    .insert_resource(renet_transport)
-    .add_systems(
-        Update,
-        (server_update_system, server_sync_players, move_players_system).run_if(resource_exists::<RenetServer>),
-    )
-    .add_systems(Update, (cleanup_disconnected_system, panic_on_error_system))
-    .run();
+    ));
+    info!("Starting server...");
+    let server_settings = ServerSettings::default();
+    let (renet_server, renet_transport) = new_renet_server(&server_settings);
+    app.add_plugins(ScheduleRunnerPlugin::run_loop(Duration::from_secs_f64(1.0 / 60.0)))
+        .init_resource::<Lobby>()
+        .add_plugins((RenetServerPlugin, NetcodeServerPlugin))
+        .insert_resource(renet_server)
+        .insert_resource(renet_transport)
+        .insert_resource(server_settings)
+        .add_systems(
+            Update,
+            (server_update_system, server_sync_players, move_players_system).run_if(resource_exists::<RenetServer>),
+        )
+        .add_systems(Update, (cleanup_disconnected_system, panic_on_error_system))
+        .run();
 }
 
-/// Create a new Renet server and Netcode transport.
-fn new_renet_server() -> (RenetServer, NetcodeServerTransport) {
-    let port: u16 = env::var("SERVER_PORT")
-        .unwrap_or_else(|_| "5000".to_string())
-        .parse()
-        .expect("Failed to parse SERVER_PORT as a number");
+/// Create a new Renet server and Netcode transport using settings from ServerSettings.
+fn new_renet_server(settings: &ServerSettings) -> (RenetServer, NetcodeServerTransport) {
+    let port = settings.port;
     info!("Server listening on port: {}", port);
     let public_addr = format!("0.0.0.0:{}", port).parse().unwrap();
     let socket = UdpSocket::bind(public_addr).unwrap();
     let current_time = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap();
     let server_config = ServerConfig {
         current_time,
-        max_clients: 64,
+        max_clients: settings.max_clients as usize,
         protocol_id: PROTOCOL_ID,
         public_addresses: vec![public_addr],
         authentication: ServerAuthentication::Unsecure,
@@ -173,12 +188,12 @@ fn server_sync_players(mut server: ResMut<RenetServer>, query: Query<(&Transform
 }
 
 /// System to move player entities based on input.
-fn move_players_system(mut query: Query<(&mut Transform, &PlayerInput)>, time: Res<Time>) {
+fn move_players_system(mut query: Query<(&mut Transform, &PlayerInput)>, time: Res<Time>, server_settings: Res<ServerSettings>) {
     for (mut transform, input) in query.iter_mut() {
         let x = (input.right as i8 - input.left as i8) as f32;
         let y = (input.down as i8 - input.up as i8) as f32;
-        transform.translation.x += x * PLAYER_MOVE_SPEED * time.delta().as_secs_f32();
-        transform.translation.z += y * PLAYER_MOVE_SPEED * time.delta().as_secs_f32();
+        transform.translation.x += x * server_settings.player_move_speed * time.delta().as_secs_f32();
+        transform.translation.z += y * server_settings.player_move_speed * time.delta().as_secs_f32();
     }
 }
 

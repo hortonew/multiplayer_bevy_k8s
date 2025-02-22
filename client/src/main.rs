@@ -8,9 +8,10 @@ use bevy_renet::renet::{ClientId, ConnectionConfig, DefaultChannel, RenetClient}
 use bevy_renet::{RenetClientPlugin, client_connected};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, net::UdpSocket};
-use std::{thread, time::Duration}; // add import for global client id
+use std::{thread, time::Duration};
 
 const PROTOCOL_ID: u64 = 7;
+
 pub static CLIENT_ID: Lazy<u64> = Lazy::new(|| {
     env::var("CLIENT_ID")
         .ok()
@@ -20,6 +21,26 @@ pub static CLIENT_ID: Lazy<u64> = Lazy::new(|| {
             current_time.as_millis() as u64
         })
 });
+
+// Updated ClientSettings with additional fields.
+#[derive(Resource, Clone)]
+struct ClientSettings {
+    max_retries: u32,
+    initial_delay: Duration,
+    server_ip: String,
+    server_port: String,
+}
+
+impl Default for ClientSettings {
+    fn default() -> Self {
+        Self {
+            max_retries: 10,
+            initial_delay: Duration::from_secs(1),
+            server_ip: env::var("SERVER_IP").unwrap_or_else(|_| "127.0.0.1".to_string()),
+            server_port: env::var("SERVER_PORT").unwrap_or_else(|_| "5000".to_string()),
+        }
+    }
+}
 
 #[derive(Debug, Default, Serialize, Deserialize, Component, Resource)]
 struct PlayerInput {
@@ -42,15 +63,17 @@ enum ServerMessages {
 
 /// Run bevy client
 fn main() {
-    let mut app = App::new();
-    let (renet_client, renet_transport) = new_renet_client();
+    let client_settings = ClientSettings::default();
+    let (renet_client, renet_transport) = new_renet_client(&client_settings);
 
+    let mut app = App::new();
     app.add_plugins(DefaultPlugins)
         .init_resource::<Lobby>()
         .add_plugins((RenetClientPlugin, NetcodeClientPlugin))
         .init_resource::<PlayerInput>()
         .insert_resource(renet_client)
         .insert_resource(renet_transport)
+        .insert_resource(client_settings)
         .add_systems(Startup, setup)
         .add_systems(
             Update,
@@ -60,11 +83,9 @@ fn main() {
         .run();
 }
 
-/// Create a new RenetClient and NetcodeClientTransport
-fn new_renet_client() -> (RenetClient, NetcodeClientTransport) {
-    let server_ip = env::var("SERVER_IP").unwrap_or_else(|_| "127.0.0.1".to_string());
-    let server_port = env::var("SERVER_PORT").unwrap_or_else(|_| "5000".to_string());
-    let server_addr = format!("{}:{}", server_ip, server_port).parse().unwrap();
+/// Create a new RenetClient and NetcodeClientTransport using settings from ClientSettings.
+fn new_renet_client(settings: &ClientSettings) -> (RenetClient, NetcodeClientTransport) {
+    let server_addr = format!("{}:{}", settings.server_ip, settings.server_port).parse().unwrap();
 
     info!("Connecting to server at: {}", server_addr);
     let socket = UdpSocket::bind("0.0.0.0:0").unwrap();
@@ -80,10 +101,9 @@ fn new_renet_client() -> (RenetClient, NetcodeClientTransport) {
     };
 
     let mut retries = 0;
-    let max_retries = 10; // Adjust this to control how many times it retries
-    let mut delay = Duration::from_secs(1);
+    let mut delay = settings.initial_delay;
 
-    while retries < max_retries {
+    while retries < settings.max_retries {
         match NetcodeClientTransport::new(current_time, authentication.clone(), socket.try_clone().unwrap()) {
             Ok(transport) => {
                 println!("✅ Connected to server on attempt {}", retries + 1);
@@ -104,7 +124,7 @@ fn new_renet_client() -> (RenetClient, NetcodeClientTransport) {
         }
     }
 
-    panic!("❌ Failed to connect to server after {} attempts.", max_retries);
+    panic!("❌ Failed to connect to server after {} attempts.", settings.max_retries);
 }
 
 /// Sync player with the server
@@ -186,7 +206,6 @@ fn player_input(keyboard_input: Res<ButtonInput<KeyCode>>, mut player_input: Res
 /// Send the player input to the server
 fn client_send_input(player_input: Res<PlayerInput>, mut client: ResMut<RenetClient>) {
     let input_message = bincode::serialize(&*player_input).unwrap();
-
     client.send_message(DefaultChannel::ReliableOrdered, input_message);
 }
 
@@ -215,7 +234,12 @@ fn reconnect_on_error_system(
         commands.remove_resource::<NetcodeClientTransport>();
 
         // Create a new client and transport
-        let (new_client, new_transport) = new_renet_client();
+        let (new_client, new_transport) = new_renet_client(&ClientSettings {
+            max_retries: 10,
+            initial_delay: Duration::from_secs(1),
+            server_ip: env::var("SERVER_IP").unwrap_or_else(|_| "127.0.0.1".to_string()),
+            server_port: env::var("SERVER_PORT").unwrap_or_else(|_| "5000".to_string()),
+        });
 
         // Re-insert the new client resources
         commands.insert_resource(new_client);
@@ -245,7 +269,12 @@ fn reconnect_check_system(mut commands: Commands, client: Res<RenetClient>, time
     commands.remove_resource::<NetcodeClientTransport>();
 
     // Create a new client and transport
-    let (new_client, new_transport) = new_renet_client();
+    let (new_client, new_transport) = new_renet_client(&ClientSettings {
+        max_retries: 10,
+        initial_delay: Duration::from_secs(1),
+        server_ip: env::var("SERVER_IP").unwrap_or_else(|_| "127.0.0.1".to_string()),
+        server_port: env::var("SERVER_PORT").unwrap_or_else(|_| "5000".to_string()),
+    });
 
     // Reinsert the new client
     commands.insert_resource(new_client);
