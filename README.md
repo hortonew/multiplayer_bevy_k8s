@@ -36,6 +36,16 @@ docker pull hortonew/multiplayer-bevy-server:latest # or get from Dockerhub
 # Run
 docker run -it --rm -p 5000:5000/tcp -p 5000:5000/udp multiplayer-bevy-server:latest
 cargo run -p client
+
+# Use a different server/port
+export SERVER_IP=a.b.c.d
+export SERVER_PORT=5000
+
+cargo build --release -p server
+./target/release/server
+
+cargo build --release -p client
+./target/release/client
 ```
 
 ### Kubernetes

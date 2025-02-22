@@ -2,6 +2,7 @@ use bevy::{prelude::*, render::mesh::PlaneMeshBuilder};
 use bevy_renet::netcode::{ClientAuthentication, NetcodeClientPlugin, NetcodeClientTransport, NetcodeTransportError};
 use bevy_renet::renet::{ClientId, ConnectionConfig, DefaultChannel, RenetClient};
 use bevy_renet::{RenetClientPlugin, client_connected};
+use std::env;
 use std::time::SystemTime;
 use std::{collections::HashMap, net::UdpSocket};
 
@@ -31,8 +32,10 @@ enum ServerMessages {
 use std::{thread, time::Duration};
 
 fn new_renet_client() -> (RenetClient, NetcodeClientTransport) {
-    let server_addr = "192.168.1.248:5000".parse().unwrap();
-    // let server_addr = "192.168.1.101:5000".parse().unwrap();
+    let server_ip = env::var("SERVER_IP").unwrap_or_else(|_| "127.0.0.1".to_string());
+    let server_port = env::var("SERVER_PORT").unwrap_or_else(|_| "5000".to_string());
+    let server_addr = format!("{}:{}", server_ip, server_port).parse().unwrap();
+    info!("Connecting to server at: {}", server_addr);
     let socket = UdpSocket::bind("0.0.0.0:0").unwrap();
     let current_time = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap();
     let client_id = current_time.as_millis() as u64;
