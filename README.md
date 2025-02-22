@@ -2,29 +2,43 @@
 
 The networking client/server example was taken from the [bevy_renet examples](https://github.com/lucaspoffo/renet/tree/master/bevy_renet/examples).  I reduced the crates needed and made it so it could run in a container.
 
-## Dependencies
-- Docker
-- [Kind](https://kind.sigs.k8s.io/)
+Warning: This is not production ready, but I hope to keep adding examples on how to scale out the game servers, maintain state, reduce reconnects, etc.
 
-## Local
+## Status
+
+[![MIT licensed][mit-badge]][mit-url]
+[![Build Status][actions-badge]][actions-url]
+[![Docker][docker-badge]][docker-url]
+
+[mit-badge]: https://img.shields.io/badge/license-MIT-blue.svg
+[mit-url]: https://github.com/hortonew/multiplayer_bevy_k8s/blob/main/LICENSE
+[actions-badge]: https://github.com/hortonew/multiplayer_bevy_k8s/actions/workflows/release-container.yml/badge.svg
+[actions-url]: https://github.com/hortonew/multiplayer_bevy_k8s/actions
+[docker-badge]: https://img.shields.io/badge/dockerhub-images-important.svg?logo=Docker&color=blue
+[docker-url]: https://hub.docker.com/repository/docker/hortonew/multiplayer-bevy-server/general
+
+## Run it
+
+### Local
 
 ```sh
 cargo run -p server
 cargo run -p client
 ```
 
-## Local docker
+### Local docker
 
 ```sh
-# server
-docker build -f server.Dockerfile -t multiplayer-bevy-server:latest .
-docker run -it --rm -p 5000:5000/tcp -p 5000:5000/udp multiplayer-bevy-server:latest
+# Build
+docker build -f server.Dockerfile -t multiplayer-bevy-server:latest . # build it yourself
+docker pull hortonew/multiplayer-bevy-server:latest # or get from Dockerhub
 
-# client
+# Run
+docker run -it --rm -p 5000:5000/tcp -p 5000:5000/udp multiplayer-bevy-server:latest
 cargo run -p client
 ```
 
-## Kubernetes
+### Kubernetes
 
 ```sh
 # Apply the metrics server
@@ -45,3 +59,9 @@ kubectl apply -f k8s/manifests/multiplayer-game-service.yaml
 3. Ensure `release-container` workflow completes successfully.  (e.g. [this v0.1.0 release](https://github.com/hortonew/multiplayer_bevy_k8s/actions/runs/13473852801))
 4. Pull down new version from dockerhub: `docker pull hortonew/multiplayer-bevy-server:vX.Y.Z`
 5. Confirm it runs with: `docker run --platform linux/amd64 -it --rm -p 5000:5000/tcp -p 5000:5000/udp hortonew/multiplayer-bevy-server:vX.Y.Z`
+
+## Next Steps
+
+- Hand off client state to new pods during reconnects (maintain state elsewhere).  Thoughts:  sidecar container with API that can get/put state.  State could be stored in Redis, or similar services.
+- Terraform EKS build example
+- Work on a more realistic game example
