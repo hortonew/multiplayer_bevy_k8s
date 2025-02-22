@@ -23,7 +23,7 @@ spec:
     spec:
       containers:
       - name: multiplayer-bevy-server
-        image: hortonew/multiplayer-bevy-server:v0.2.0
+        image: hortonew/multiplayer-bevy-server:v0.3.0
         ports:
         - containerPort: 5000
         env:

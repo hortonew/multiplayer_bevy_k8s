@@ -2,11 +2,11 @@ use bevy::{prelude::*, render::mesh::PlaneMeshBuilder};
 use bevy_renet::netcode::{ClientAuthentication, NetcodeClientPlugin, NetcodeClientTransport, NetcodeTransportError};
 use bevy_renet::renet::{ClientId, ConnectionConfig, DefaultChannel, RenetClient};
 use bevy_renet::{RenetClientPlugin, client_connected};
+use serde::{Deserialize, Serialize};
 use std::env;
 use std::time::SystemTime;
 use std::{collections::HashMap, net::UdpSocket};
-
-use serde::{Deserialize, Serialize};
+use std::{thread, time::Duration};
 
 const PROTOCOL_ID: u64 = 7;
 
@@ -29,8 +29,31 @@ enum ServerMessages {
     PlayerDisconnected { id: ClientId },
 }
 
-use std::{thread, time::Duration};
+/// Run bevy client
+fn main() {
+    let mut app = App::new();
+    app.add_plugins(DefaultPlugins);
+    app.init_resource::<Lobby>();
 
+    app.add_plugins(RenetClientPlugin);
+    app.add_plugins(NetcodeClientPlugin);
+    app.init_resource::<PlayerInput>();
+    let (client, transport) = new_renet_client();
+    app.insert_resource(client);
+    app.insert_resource(transport);
+
+    app.add_systems(
+        Update,
+        (player_input, client_send_input, client_sync_players).run_if(client_connected),
+    );
+
+    app.add_systems(Startup, setup);
+    app.add_systems(Update, (reconnect_on_error_system, reconnect_check_system));
+
+    app.run();
+}
+
+/// Create a new RenetClient and NetcodeClientTransport
 fn new_renet_client() -> (RenetClient, NetcodeClientTransport) {
     let server_ip = env::var("SERVER_IP").unwrap_or_else(|_| "127.0.0.1".to_string());
     let server_port = env::var("SERVER_PORT").unwrap_or_else(|_| "5000".to_string());
@@ -80,29 +103,7 @@ fn new_renet_client() -> (RenetClient, NetcodeClientTransport) {
     panic!("❌ Failed to connect to server after {} attempts.", max_retries);
 }
 
-fn main() {
-    let mut app = App::new();
-    app.add_plugins(DefaultPlugins);
-    app.init_resource::<Lobby>();
-
-    app.add_plugins(RenetClientPlugin);
-    app.add_plugins(NetcodeClientPlugin);
-    app.init_resource::<PlayerInput>();
-    let (client, transport) = new_renet_client();
-    app.insert_resource(client);
-    app.insert_resource(transport);
-
-    app.add_systems(
-        Update,
-        (player_input, client_send_input, client_sync_players).run_if(client_connected),
-    );
-
-    app.add_systems(Startup, setup);
-    app.add_systems(Update, (panic_on_error_system, reconnect_check_system));
-
-    app.run();
-}
-
+/// Sync player with the server
 fn client_sync_players(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -148,7 +149,7 @@ fn client_sync_players(
     }
 }
 
-/// set up a simple 3D scene
+/// Setup the scene
 fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>) {
     // plane
     commands.spawn((
@@ -170,6 +171,7 @@ fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials
     ));
 }
 
+/// Update the player input
 fn player_input(keyboard_input: Res<ButtonInput<KeyCode>>, mut player_input: ResMut<PlayerInput>) {
     player_input.left = keyboard_input.pressed(KeyCode::KeyA) || keyboard_input.pressed(KeyCode::ArrowLeft);
     player_input.right = keyboard_input.pressed(KeyCode::KeyD) || keyboard_input.pressed(KeyCode::ArrowRight);
@@ -177,15 +179,16 @@ fn player_input(keyboard_input: Res<ButtonInput<KeyCode>>, mut player_input: Res
     player_input.down = keyboard_input.pressed(KeyCode::KeyS) || keyboard_input.pressed(KeyCode::ArrowDown);
 }
 
+/// Send the player input to the server
 fn client_send_input(player_input: Res<PlayerInput>, mut client: ResMut<RenetClient>) {
     let input_message = bincode::serialize(&*player_input).unwrap();
 
     client.send_message(DefaultChannel::ReliableOrdered, input_message);
 }
 
-// If any error is found we just panic
+/// Reconnect to the server if an error occurs
 #[allow(clippy::never_loop)]
-fn panic_on_error_system(
+fn reconnect_on_error_system(
     mut commands: Commands,
     mut renet_error: EventReader<NetcodeTransportError>,
     time: Res<Time>,
@@ -218,9 +221,11 @@ fn panic_on_error_system(
     }
 }
 
+/// Check the system to see if the client is connected
 fn reconnect_check_system(mut commands: Commands, client: Res<RenetClient>, time: Res<Time>, mut last_check: Local<f64>) {
+    // Only check once per second
     if time.elapsed_secs_f64() - *last_check < 1.0 {
-        return; // Only check once per second
+        return;
     }
     *last_check = time.elapsed_secs_f64();
 

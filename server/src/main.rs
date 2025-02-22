@@ -12,7 +12,6 @@ use std::time::SystemTime;
 use std::{collections::HashMap, net::UdpSocket};
 
 const PROTOCOL_ID: u64 = 7;
-
 const PLAYER_MOVE_SPEED: f32 = 1.0;
 
 #[derive(Debug, Default, Serialize, Deserialize, Component, Resource)]
@@ -44,31 +43,11 @@ enum ServerMessages {
     PlayerDisconnected { id: ClientId },
 }
 
-fn new_renet_server() -> (RenetServer, NetcodeServerTransport) {
-    let port: u16 = env::var("SERVER_PORT")
-        .unwrap_or_else(|_| "5000".to_string()) // Default to 5000
-        .parse()
-        .expect("Failed to parse SERVER_PORT as a number");
-    info!("Server listening on port: {}", port);
-    let public_addr = format!("0.0.0.0:{}", port).parse().unwrap();
-    let socket = UdpSocket::bind(public_addr).unwrap();
-    let current_time = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap();
-    let server_config = ServerConfig {
-        current_time,
-        max_clients: 64,
-        protocol_id: PROTOCOL_ID,
-        public_addresses: vec![public_addr],
-        authentication: ServerAuthentication::Unsecure,
-    };
-
-    let transport = NetcodeServerTransport::new(server_config, socket).unwrap();
-    let server = RenetServer::new(ConnectionConfig::default());
-
-    (server, transport)
-}
-
+/// Run bevy server
 fn main() {
     let mut app = App::new();
+
+    // minimal plugins to work in a windowless environment
     app.add_plugins((
         TimePlugin,
         InputPlugin,
@@ -99,6 +78,30 @@ fn main() {
     app.run();
 }
 
+/// Create a new Renet server and Netcode transport.
+fn new_renet_server() -> (RenetServer, NetcodeServerTransport) {
+    let port: u16 = env::var("SERVER_PORT")
+        .unwrap_or_else(|_| "5000".to_string())
+        .parse()
+        .expect("Failed to parse SERVER_PORT as a number");
+    info!("Server listening on port: {}", port);
+    let public_addr = format!("0.0.0.0:{}", port).parse().unwrap();
+    let socket = UdpSocket::bind(public_addr).unwrap();
+    let current_time = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap();
+    let server_config = ServerConfig {
+        current_time,
+        max_clients: 64,
+        protocol_id: PROTOCOL_ID,
+        public_addresses: vec![public_addr],
+        authentication: ServerAuthentication::Unsecure,
+    };
+
+    let transport = NetcodeServerTransport::new(server_config, socket).unwrap();
+    let server = RenetServer::new(ConnectionConfig::default());
+    (server, transport)
+}
+
+/// System to handle server events and player input.
 fn server_update_system(
     mut server_events: EventReader<ServerEvent>,
     mut commands: Commands,
@@ -115,7 +118,7 @@ fn server_update_system(
                     commands.entity(player_entity).remove::<Disconnected>();
                     info!("Reattached client {} to existing entity.", client_id);
                 } else {
-                    // Spawn new player cube if not existing.
+                    // Spawn new player cube if it doesn't exist.
                     let player_entity = commands
                         .spawn((Transform::from_xyz(0.0, 0.5, 0.0),))
                         .insert(PlayerInput::default())
@@ -151,11 +154,11 @@ fn server_update_system(
     }
 }
 
+/// System to cleanup disconnected entities after a number of seconds.
 fn cleanup_disconnected_system(mut commands: Commands, time: Res<Time>, mut lobby: ResMut<Lobby>, query: Query<(Entity, &Disconnected)>) {
     let grace_period = 20.0;
     for (entity, disconnected) in query.iter() {
         if time.elapsed_secs_f64() - disconnected.disconnect_time > grace_period {
-            // Remove phantom state if disconnected too long.
             let client_id_opt = lobby.players.iter().find_map(|(id, &e)| if e == entity { Some(*id) } else { None });
             if let Some(client_id) = client_id_opt {
                 lobby.players.remove(&client_id);
@@ -166,16 +169,17 @@ fn cleanup_disconnected_system(mut commands: Commands, time: Res<Time>, mut lobb
     }
 }
 
+/// System to sync player positions to clients.
 fn server_sync_players(mut server: ResMut<RenetServer>, query: Query<(&Transform, &Player)>) {
     let mut players: HashMap<ClientId, [f32; 3]> = HashMap::new();
     for (transform, player) in query.iter() {
         players.insert(player.id, transform.translation.into());
     }
-
     let sync_message = bincode::serialize(&players).unwrap();
     server.broadcast_message(DefaultChannel::Unreliable, sync_message);
 }
 
+/// System to move player entities based on input.
 fn move_players_system(mut query: Query<(&mut Transform, &PlayerInput)>, time: Res<Time>) {
     for (mut transform, input) in query.iter_mut() {
         let x = (input.right as i8 - input.left as i8) as f32;
@@ -185,7 +189,7 @@ fn move_players_system(mut query: Query<(&mut Transform, &PlayerInput)>, time: R
     }
 }
 
-// If any error is found we just panic
+/// If any error is found we just panic
 #[allow(clippy::never_loop)]
 fn panic_on_error_system(mut renet_error: EventReader<NetcodeTransportError>) {
     for e in renet_error.read() {

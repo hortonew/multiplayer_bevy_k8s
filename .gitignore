@@ -2,3 +2,4 @@
 .bacon-locations
 .vscode
 /release
+loadtest.sh
