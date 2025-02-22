@@ -2,7 +2,7 @@ use once_cell::sync::Lazy;
 use std::env;
 use std::time::SystemTime;
 
-use bevy::{prelude::*, render::mesh::PlaneMeshBuilder};
+use bevy::{app::AppExit, prelude::*, render::mesh::PlaneMeshBuilder};
 use bevy_renet::netcode::{ClientAuthentication, NetcodeClientPlugin, NetcodeClientTransport, NetcodeTransportError};
 use bevy_renet::renet::{ClientId, ConnectionConfig, DefaultChannel, RenetClient};
 use bevy_renet::{RenetClientPlugin, client_connected};
@@ -79,7 +79,7 @@ fn main() {
             Update,
             (player_input, client_send_input, client_sync_players).run_if(client_connected),
         )
-        .add_systems(Update, (reconnect_on_error_system, reconnect_check_system))
+        .add_systems(Update, (reconnect_on_error_system, reconnect_check_system, exit_system))
         .run();
 }
 
@@ -201,6 +201,17 @@ fn player_input(keyboard_input: Res<ButtonInput<KeyCode>>, mut player_input: Res
     player_input.right = keyboard_input.pressed(KeyCode::KeyD) || keyboard_input.pressed(KeyCode::ArrowRight);
     player_input.up = keyboard_input.pressed(KeyCode::KeyW) || keyboard_input.pressed(KeyCode::ArrowUp);
     player_input.down = keyboard_input.pressed(KeyCode::KeyS) || keyboard_input.pressed(KeyCode::ArrowDown);
+}
+
+/// Exit system that gracefully disconnects from renet on Escape key press.
+fn exit_system(keyboard_input: Res<ButtonInput<KeyCode>>, client: Option<ResMut<RenetClient>>, mut exit: EventWriter<AppExit>) {
+    if keyboard_input.just_pressed(KeyCode::Escape) {
+        println!("Exit requested. Disconnecting gracefully...");
+        if let Some(mut client) = client {
+            client.disconnect();
+        }
+        exit.send(AppExit::Success);
+    }
 }
 
 /// Send the player input to the server

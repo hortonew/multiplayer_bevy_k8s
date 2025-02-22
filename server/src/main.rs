@@ -43,19 +43,24 @@ enum ServerMessages {
 }
 
 // New resource holding server settings.
-#[derive(Resource, Clone)]
+#[derive(Resource, Clone, Debug)]
 struct ServerSettings {
     port: u16,
     max_clients: u32,
     player_move_speed: f32,
+    client_disconnect_grace_period: f64,
 }
 
 impl Default for ServerSettings {
     fn default() -> Self {
         Self {
             port: env::var("SERVER_PORT").ok().and_then(|s| s.parse().ok()).unwrap_or(5000),
-            max_clients: 64,
+            max_clients: env::var("MAX_CLIENTS").ok().and_then(|s| s.parse().ok()).unwrap_or(64),
             player_move_speed: 1.0,
+            client_disconnect_grace_period: env::var("CLIENT_DISCONNECT_GRACE_PERIOD")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(30.0),
         }
     }
 }
@@ -75,6 +80,7 @@ fn main() {
     info!("Starting server...");
     let server_settings = ServerSettings::default();
     let (renet_server, renet_transport) = new_renet_server(&server_settings);
+    info!("{:?}", server_settings);
     app.add_plugins(ScheduleRunnerPlugin::run_loop(Duration::from_secs_f64(1.0 / 60.0)))
         .init_resource::<Lobby>()
         .add_plugins((RenetServerPlugin, NetcodeServerPlugin))
@@ -163,16 +169,24 @@ fn server_update_system(
 }
 
 /// System to cleanup disconnected entities after a number of seconds.
-fn cleanup_disconnected_system(mut commands: Commands, time: Res<Time>, mut lobby: ResMut<Lobby>, query: Query<(Entity, &Disconnected)>) {
-    let grace_period = 20.0;
+fn cleanup_disconnected_system(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut lobby: ResMut<Lobby>,
+    query: Query<(Entity, &Disconnected)>,
+    server_settings: Res<ServerSettings>,
+) {
     for (entity, disconnected) in query.iter() {
-        if time.elapsed_secs_f64() - disconnected.disconnect_time > grace_period {
+        if time.elapsed_secs_f64() - disconnected.disconnect_time > server_settings.client_disconnect_grace_period {
             let client_id_opt = lobby.players.iter().find_map(|(id, &e)| if e == entity { Some(*id) } else { None });
             if let Some(client_id) = client_id_opt {
                 lobby.players.remove(&client_id);
             }
             commands.entity(entity).despawn();
-            info!("Cleaned up disconnected entity {:?}", entity);
+            info!(
+                "Cleaned up disconnected entity {:?} after {}s of inactivity",
+                entity, server_settings.client_disconnect_grace_period
+            );
         }
     }
 }
