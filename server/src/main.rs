@@ -28,6 +28,11 @@ struct Player {
     id: ClientId,
 }
 
+#[derive(Debug, Component)]
+struct Disconnected {
+    disconnect_time: f64,
+}
+
 #[derive(Debug, Default, Resource)]
 struct Lobby {
     players: HashMap<ClientId, Entity>,
@@ -88,6 +93,7 @@ fn main() {
         (server_update_system, server_sync_players, move_players_system).run_if(resource_exists::<RenetServer>),
     );
 
+    app.add_systems(Update, cleanup_disconnected_system);
     app.add_systems(Update, panic_on_error_system);
 
     app.run();
@@ -98,38 +104,39 @@ fn server_update_system(
     mut commands: Commands,
     mut lobby: ResMut<Lobby>,
     mut server: ResMut<RenetServer>,
+    time: Res<Time>,
 ) {
     for event in server_events.read() {
         match event {
             ServerEvent::ClientConnected { client_id } => {
                 info!("Player {} connected.", client_id);
-                // Spawn player cube
-                let player_entity = commands
-                    .spawn((Transform::from_xyz(0.0, 0.5, 0.0),))
-                    .insert(PlayerInput::default())
-                    .insert(Player { id: *client_id })
-                    .id();
-
-                // We could send an InitState with all the players id and positions for the client
-                // but this is easier to do.
-                for &player_id in lobby.players.keys() {
-                    let message = bincode::serialize(&ServerMessages::PlayerConnected { id: player_id }).unwrap();
-                    server.send_message(*client_id, DefaultChannel::ReliableOrdered, message);
+                if let Some(&player_entity) = lobby.players.get(client_id) {
+                    // If reconnecting, remove Disconnected marker if it exists.
+                    commands.entity(player_entity).remove::<Disconnected>();
+                    info!("Reattached client {} to existing entity.", client_id);
+                } else {
+                    // Spawn new player cube if not existing.
+                    let player_entity = commands
+                        .spawn((Transform::from_xyz(0.0, 0.5, 0.0),))
+                        .insert(PlayerInput::default())
+                        .insert(Player { id: *client_id })
+                        .id();
+                    lobby.players.insert(*client_id, player_entity);
                 }
-
-                lobby.players.insert(*client_id, player_entity);
-
+                // Broadcast connection info.
                 let message = bincode::serialize(&ServerMessages::PlayerConnected { id: *client_id }).unwrap();
                 server.broadcast_message(DefaultChannel::ReliableOrdered, message);
             }
             ServerEvent::ClientDisconnected { client_id, reason } => {
                 info!("Player {} disconnected: {}", client_id, reason);
-                if let Some(player_entity) = lobby.players.remove(client_id) {
-                    commands.entity(player_entity).despawn();
+                if let Some(&player_entity) = lobby.players.get(client_id) {
+                    // Mark as disconnected instead of despawning immediately.
+                    commands.entity(player_entity).insert(Disconnected {
+                        disconnect_time: time.elapsed_secs_f64(),
+                    });
+                    let message = bincode::serialize(&ServerMessages::PlayerDisconnected { id: *client_id }).unwrap();
+                    server.broadcast_message(DefaultChannel::ReliableOrdered, message);
                 }
-
-                let message = bincode::serialize(&ServerMessages::PlayerDisconnected { id: *client_id }).unwrap();
-                server.broadcast_message(DefaultChannel::ReliableOrdered, message);
             }
         }
     }
@@ -137,9 +144,24 @@ fn server_update_system(
     for client_id in server.clients_id() {
         while let Some(message) = server.receive_message(client_id, DefaultChannel::ReliableOrdered) {
             let player_input: PlayerInput = bincode::deserialize(&message).unwrap();
-            if let Some(player_entity) = lobby.players.get(&client_id) {
-                commands.entity(*player_entity).insert(player_input);
+            if let Some(&player_entity) = lobby.players.get(&client_id) {
+                commands.entity(player_entity).insert(player_input);
             }
+        }
+    }
+}
+
+fn cleanup_disconnected_system(mut commands: Commands, time: Res<Time>, mut lobby: ResMut<Lobby>, query: Query<(Entity, &Disconnected)>) {
+    let grace_period = 20.0;
+    for (entity, disconnected) in query.iter() {
+        if time.elapsed_secs_f64() - disconnected.disconnect_time > grace_period {
+            // Remove phantom state if disconnected too long.
+            let client_id_opt = lobby.players.iter().find_map(|(id, &e)| if e == entity { Some(*id) } else { None });
+            if let Some(client_id) = client_id_opt {
+                lobby.players.remove(&client_id);
+            }
+            commands.entity(entity).despawn();
+            info!("Cleaned up disconnected entity {:?}", entity);
         }
     }
 }

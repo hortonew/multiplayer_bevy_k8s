@@ -38,8 +38,13 @@ fn new_renet_client() -> (RenetClient, NetcodeClientTransport) {
     info!("Connecting to server at: {}", server_addr);
     let socket = UdpSocket::bind("0.0.0.0:0").unwrap();
     let current_time = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap();
-    let client_id = current_time.as_millis() as u64;
+    // Reuse the same client id if provided via CLIENT_ID.
+    let client_id: u64 = env::var("CLIENT_ID")
+        .ok()
+        .and_then(|id_str| id_str.parse().ok())
+        .unwrap_or_else(|| current_time.as_millis() as u64);
 
+    info!("Attempting to connect with CLIENT_ID={}", client_id);
     let authentication = ClientAuthentication::Unsecure {
         client_id,
         protocol_id: PROTOCOL_ID,
@@ -238,13 +243,4 @@ fn reconnect_check_system(mut commands: Commands, client: Res<RenetClient>, time
     commands.insert_resource(new_transport);
 
     println!("✅ Reconnected to server!");
-}
-
-// for load
-fn client_update_loop(player_input: Res<PlayerInput>, mut client: ResMut<RenetClient>) {
-    let input_message = bincode::serialize(&*player_input).unwrap();
-
-    for _ in 0..50 {
-        client.send_message(DefaultChannel::ReliableOrdered, input_message.clone());
-    }
 }
