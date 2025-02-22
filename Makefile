@@ -1,4 +1,4 @@
-.PHONY: build-release test build-server-container run-server clean
+.PHONY: build-release test build-server-container run-server clean doc start-kind stop-kind
 
 BINARY_NAME := server
 CONTAINER_NAME := multiplayer-bevy-server
@@ -49,3 +49,6 @@ start-kind:
 
 stop-kind:
 	kind delete cluster --name gamedev
+
+doc:
+	cargo doc --no-deps --open
