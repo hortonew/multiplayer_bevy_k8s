@@ -1,8 +1,10 @@
-use bevy::{prelude::*, render::mesh::PlaneMeshBuilder};
+use bevy::input::InputPlugin;
+use bevy::time::TimePlugin;
+use bevy::{app::ScheduleRunnerPlugin, prelude::*};
 use bevy_renet::RenetServerPlugin;
 use bevy_renet::netcode::{NetcodeServerPlugin, NetcodeServerTransport, NetcodeTransportError, ServerAuthentication, ServerConfig};
 use bevy_renet::renet::{ClientId, ConnectionConfig, DefaultChannel, RenetServer, ServerEvent};
-
+use core::time::Duration;
 use std::time::SystemTime;
 use std::{collections::HashMap, net::UdpSocket};
 
@@ -37,7 +39,7 @@ enum ServerMessages {
 }
 
 fn new_renet_server() -> (RenetServer, NetcodeServerTransport) {
-    let public_addr = "127.0.0.1:5000".parse().unwrap();
+    let public_addr = "0.0.0.0:5000".parse().unwrap();
     let socket = UdpSocket::bind(public_addr).unwrap();
     let current_time = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap();
     let server_config = ServerConfig {
@@ -55,9 +57,18 @@ fn new_renet_server() -> (RenetServer, NetcodeServerTransport) {
 }
 
 fn main() {
-    println!("Usage: run with \"server\" or \"client\" argument");
     let mut app = App::new();
-    app.add_plugins(DefaultPlugins);
+    // app.add_plugins(DefaultPlugins);
+    app.add_plugins((
+        TimePlugin,
+        InputPlugin,
+        TransformPlugin,
+        TaskPoolPlugin {
+            task_pool_options: Default::default(),
+        },
+    ));
+
+    app.add_plugins(ScheduleRunnerPlugin::run_loop(Duration::from_secs_f64(1.0 / 60.0)));
     app.init_resource::<Lobby>();
 
     app.add_plugins(RenetServerPlugin);
@@ -71,7 +82,6 @@ fn main() {
         (server_update_system, server_sync_players, move_players_system).run_if(resource_exists::<RenetServer>),
     );
 
-    app.add_systems(Startup, setup);
     app.add_systems(Update, panic_on_error_system);
 
     app.run();
@@ -80,8 +90,6 @@ fn main() {
 fn server_update_system(
     mut server_events: EventReader<ServerEvent>,
     mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
     mut lobby: ResMut<Lobby>,
     mut server: ResMut<RenetServer>,
 ) {
@@ -91,11 +99,7 @@ fn server_update_system(
                 println!("Player {} connected.", client_id);
                 // Spawn player cube
                 let player_entity = commands
-                    .spawn((
-                        Mesh3d(meshes.add(Cuboid::from_size(Vec3::splat(1.0)))),
-                        MeshMaterial3d(materials.add(Color::srgb(0.8, 0.7, 0.6))),
-                        Transform::from_xyz(0.0, 0.5, 0.0),
-                    ))
+                    .spawn((Transform::from_xyz(0.0, 0.5, 0.0),))
                     .insert(PlayerInput::default())
                     .insert(Player { id: *client_id })
                     .id();
@@ -142,28 +146,6 @@ fn server_sync_players(mut server: ResMut<RenetServer>, query: Query<(&Transform
 
     let sync_message = bincode::serialize(&players).unwrap();
     server.broadcast_message(DefaultChannel::Unreliable, sync_message);
-}
-
-/// set up a simple 3D scene
-fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>) {
-    // plane
-    commands.spawn((
-        Mesh3d(meshes.add(Mesh::from(PlaneMeshBuilder::from_size(Vec2::splat(5.0))))),
-        MeshMaterial3d(materials.add(Color::srgb(0.3, 0.5, 0.3))),
-    ));
-    // light
-    commands.spawn((
-        PointLight {
-            shadows_enabled: true,
-            ..default()
-        },
-        Transform::from_xyz(4.0, 8.0, 4.0),
-    ));
-    // camera
-    commands.spawn((
-        Camera3d::default(),
-        Transform::from_xyz(-2.0, 2.5, 5.0).looking_at(Vec3::ZERO, Vec3::Y),
-    ));
 }
 
 fn move_players_system(mut query: Query<(&mut Transform, &PlayerInput)>, time: Res<Time>) {
