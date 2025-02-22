@@ -1,0 +1,17 @@
+apiVersion: metallb.io/v1beta1
+kind: IPAddressPool
+metadata:
+  name: pool1
+  namespace: metallb-system
+spec:
+  addresses:
+  - 192.168.1.101-192.168.1.110 # Change this to your LAN subnet, IPs should not already be in use
+---
+apiVersion: metallb.io/v1beta1
+kind: L2Advertisement
+metadata:
+  name: l2adv
+  namespace: metallb-system
+spec:
+  ipAddressPools:
+  - pool1

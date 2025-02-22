@@ -2,7 +2,6 @@ use bevy::{prelude::*, render::mesh::PlaneMeshBuilder};
 use bevy_renet::netcode::{ClientAuthentication, NetcodeClientPlugin, NetcodeClientTransport, NetcodeTransportError};
 use bevy_renet::renet::{ClientId, ConnectionConfig, DefaultChannel, RenetClient};
 use bevy_renet::{RenetClientPlugin, client_connected};
-
 use std::time::SystemTime;
 use std::{collections::HashMap, net::UdpSocket};
 
@@ -29,11 +28,15 @@ enum ServerMessages {
     PlayerDisconnected { id: ClientId },
 }
 
+use std::{thread, time::Duration};
+
 fn new_renet_client() -> (RenetClient, NetcodeClientTransport) {
-    let server_addr = "127.0.0.1:5000".parse().unwrap();
-    let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+    let server_addr = "192.168.1.248:5000".parse().unwrap();
+    // let server_addr = "192.168.1.101:5000".parse().unwrap();
+    let socket = UdpSocket::bind("0.0.0.0:0").unwrap();
     let current_time = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap();
     let client_id = current_time.as_millis() as u64;
+
     let authentication = ClientAuthentication::Unsecure {
         client_id,
         protocol_id: PROTOCOL_ID,
@@ -41,10 +44,32 @@ fn new_renet_client() -> (RenetClient, NetcodeClientTransport) {
         user_data: None,
     };
 
-    let transport = NetcodeClientTransport::new(current_time, authentication, socket).unwrap();
-    let client = RenetClient::new(ConnectionConfig::default());
+    let mut retries = 0;
+    let max_retries = 10; // Adjust this to control how many times it retries
+    let mut delay = Duration::from_secs(1);
 
-    (client, transport)
+    while retries < max_retries {
+        match NetcodeClientTransport::new(current_time, authentication.clone(), socket.try_clone().unwrap()) {
+            Ok(transport) => {
+                println!("✅ Connected to server on attempt {}", retries + 1);
+                let client = RenetClient::new(ConnectionConfig::default());
+                return (client, transport);
+            }
+            Err(e) => {
+                println!(
+                    "⚠️ Connection attempt {} failed: {}. Retrying in {}s...",
+                    retries + 1,
+                    e,
+                    delay.as_secs()
+                );
+                thread::sleep(delay);
+                delay *= 2; // Exponential backoff (1s, 2s, 4s, 8s...)
+                retries += 1;
+            }
+        }
+    }
+
+    panic!("❌ Failed to connect to server after {} attempts.", max_retries);
 }
 
 fn main() {
@@ -65,7 +90,7 @@ fn main() {
     );
 
     app.add_systems(Startup, setup);
-    app.add_systems(Update, panic_on_error_system);
+    app.add_systems(Update, (panic_on_error_system, reconnect_check_system));
 
     app.run();
 }
@@ -152,8 +177,71 @@ fn client_send_input(player_input: Res<PlayerInput>, mut client: ResMut<RenetCli
 
 // If any error is found we just panic
 #[allow(clippy::never_loop)]
-fn panic_on_error_system(mut renet_error: EventReader<NetcodeTransportError>) {
+fn panic_on_error_system(
+    mut commands: Commands,
+    mut renet_error: EventReader<NetcodeTransportError>,
+    time: Res<Time>,
+    mut last_check: Local<f64>,
+) {
+    // Only check once per second
+    if time.elapsed_secs_f64() - *last_check < 1.0 {
+        return;
+    }
+    *last_check = time.elapsed_secs_f64();
+
     for e in renet_error.read() {
-        panic!("{}", e);
+        error!("⚠️ Connection lost: {:?}", e);
+
+        // Attempt to reconnect
+        println!("🔄 Attempting to reconnect...");
+
+        // Remove the old client resources
+        commands.remove_resource::<RenetClient>();
+        commands.remove_resource::<NetcodeClientTransport>();
+
+        // Create a new client and transport
+        let (new_client, new_transport) = new_renet_client();
+
+        // Re-insert the new client resources
+        commands.insert_resource(new_client);
+        commands.insert_resource(new_transport);
+
+        println!("✅ Reconnection attempt completed.");
+    }
+}
+
+fn reconnect_check_system(mut commands: Commands, client: Res<RenetClient>, time: Res<Time>, mut last_check: Local<f64>) {
+    if time.elapsed_secs_f64() - *last_check < 1.0 {
+        return; // Only check once per second
+    }
+    *last_check = time.elapsed_secs_f64();
+
+    // 🔹 Prevent reconnecting if already connected
+    if client.is_connected() {
+        return;
+    }
+
+    println!("⚠️ Connection lost. Attempting to reconnect...");
+
+    // Remove old client
+    commands.remove_resource::<RenetClient>();
+    commands.remove_resource::<NetcodeClientTransport>();
+
+    // Create a new client and transport
+    let (new_client, new_transport) = new_renet_client();
+
+    // Reinsert the new client
+    commands.insert_resource(new_client);
+    commands.insert_resource(new_transport);
+
+    println!("✅ Reconnected to server!");
+}
+
+// for load
+fn client_update_loop(player_input: Res<PlayerInput>, mut client: ResMut<RenetClient>) {
+    let input_message = bincode::serialize(&*player_input).unwrap();
+
+    for _ in 0..50 {
+        client.send_message(DefaultChannel::ReliableOrdered, input_message.clone());
     }
 }

@@ -1,6 +1,10 @@
 # Multiplayer Game in Bevy on Kubernetes
 
-The example "game" was taken from the [bevy_renet examples](https://github.com/lucaspoffo/renet/tree/master/bevy_renet/examples).
+The networking client/server example was taken from the [bevy_renet examples](https://github.com/lucaspoffo/renet/tree/master/bevy_renet/examples).  I reduced the crates needed and made it so it could run in a container.
+
+## Dependencies
+- Docker
+- [Kind](https://kind.sigs.k8s.io/)
 
 ## Local
 
@@ -18,6 +22,20 @@ docker run -it --rm -p 5000:5000/tcp -p 5000:5000/udp multiplayer-bevy-server:la
 
 # client
 cargo run -p client
+```
+
+## Kubernetes
+
+```sh
+# Apply the metrics server
+kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+
+# Apply MetalLB load balancer and an IP Address pool
+kubectl apply -f https://raw.githubusercontent.com/metallb/metallb/main/config/manifests/metallb-native.yaml
+kubectl apply -f k8s/manifests/loadbalancer-pool.yaml
+
+# Apply the gamedev namespace, statefulset, service, and pod autoscaler
+kubectl apply -f k8s/manifests/multiplayer-game-service.yaml
 ```
 
 ## Release new server version

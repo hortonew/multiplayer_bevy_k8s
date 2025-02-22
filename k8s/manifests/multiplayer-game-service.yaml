@@ -1,0 +1,83 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gamedev
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: multiplayer-bevy-server
+  namespace: gamedev
+  labels:
+    app: multiplayer-bevy-server
+spec:
+  serviceName: multiplayer-bevy-server
+  replicas: 1
+  selector:
+    matchLabels:
+      app: multiplayer-bevy-server
+  template:
+    metadata:
+      labels:
+        app: multiplayer-bevy-server
+    spec:
+      containers:
+      - name: multiplayer-bevy-server
+        image: hortonew/multiplayer-bevy-server:v0.2.0
+        ports:
+        - containerPort: 5000
+        env:
+        - name: SERVER_PORT
+          value: "5000"
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "250m"
+          limits:
+            memory: "128Mi"
+            cpu: "500m"
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: multiplayer-bevy-server
+  namespace: gamedev
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: StatefulSet
+    name: multiplayer-bevy-server
+  minReplicas: 1
+  maxReplicas: 5
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 80
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: multiplayer-bevy-server
+  namespace: gamedev
+spec:
+  selector:
+    app: multiplayer-bevy-server
+  ports:
+  - name: tcp-port
+    protocol: TCP
+    port: 5000
+    targetPort: 5000
+  - name: udp-port
+    protocol: UDP
+    port: 5000
+    targetPort: 5000
+  type: LoadBalancer
