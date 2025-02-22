@@ -35,10 +35,17 @@ test:
 	cargo test
 
 build-server-container:
-	docker build -f server.Dockerfile -t $(CONTAINER_NAME):$(CONTAINER_TAG) .
+	docker build --platform linux/amd64 -f server.Dockerfile -t $(CONTAINER_NAME):$(CONTAINER_TAG) .
 
 run-server-container:
 	docker run -it --rm -p 5000:5000/tcp -p 5000:5000/udp $(CONTAINER_NAME):$(CONTAINER_TAG)
 
 clean:
 	cargo clean
+
+# Kubernetes
+start-kind:
+	kind create cluster --name gamedev --config k8s/kind_config.yaml
+
+stop-kind:
+	kind delete cluster --name gamedev
