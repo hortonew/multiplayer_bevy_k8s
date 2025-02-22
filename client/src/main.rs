@@ -42,7 +42,7 @@ impl Default for ClientSettings {
     }
 }
 
-#[derive(Debug, Default, Serialize, Deserialize, Component, Resource)]
+#[derive(Debug, Default, Serialize, Deserialize, Component, Resource, Clone)]
 struct PlayerInput {
     up: bool,
     down: bool,
@@ -64,23 +64,36 @@ enum ServerMessages {
 /// Run bevy client
 fn main() {
     let client_settings = ClientSettings::default();
-    let (renet_client, renet_transport) = new_renet_client(&client_settings);
+    // Check MULTIPLAYER from environment, default false.
+    let multiplayer = env::var("MULTIPLAYER").unwrap_or_default().to_lowercase() == "true";
 
     let mut app = App::new();
     app.add_plugins(DefaultPlugins)
         .init_resource::<Lobby>()
-        .add_plugins((RenetClientPlugin, NetcodeClientPlugin))
         .init_resource::<PlayerInput>()
-        .insert_resource(renet_client)
-        .insert_resource(renet_transport)
-        .insert_resource(client_settings)
-        .add_systems(Startup, setup)
-        .add_systems(
+        .insert_resource(client_settings.clone());
+
+    if multiplayer {
+        // Multiplayer: initialize renet client and add network plugins/systems.
+        let (renet_client, renet_transport) = new_renet_client(&client_settings);
+        app.insert_resource(renet_client)
+            .insert_resource(renet_transport)
+            .add_plugins((RenetClientPlugin, NetcodeClientPlugin))
+            .add_systems(Startup, setup)
+            .add_systems(
+                Update,
+                (player_input, client_send_input, client_sync_players).run_if(client_connected),
+            )
+            .add_systems(Update, (reconnect_on_error_system, reconnect_check_system, exit_system));
+    } else {
+        // Local mode: spawn local player, update input, then move the player.
+        app.add_systems(Startup, (setup, local_spawn_player)).add_systems(
             Update,
-            (player_input, client_send_input, client_sync_players).run_if(client_connected),
-        )
-        .add_systems(Update, (reconnect_on_error_system, reconnect_check_system, exit_system))
-        .run();
+            (player_input, exit_system, local_update_player_input, local_move_players_system),
+        );
+    }
+
+    app.run();
 }
 
 /// Create a new RenetClient and NetcodeClientTransport using settings from ClientSettings.
@@ -292,4 +305,46 @@ fn reconnect_check_system(mut commands: Commands, client: Res<RenetClient>, time
     commands.insert_resource(new_transport);
 
     println!("✅ Reconnected to server!");
+}
+
+/// For local simulation, add a simple system that updates transformations using local input.
+fn local_move_players_system(mut query: Query<(&mut Transform, &PlayerInput)>, time: Res<Time>) {
+    for (mut transform, input) in query.iter_mut() {
+        let x = (input.right as i8 - input.left as i8) as f32;
+        let y = (input.down as i8 - input.up as i8) as f32;
+        transform.translation.x += x * time.delta().as_secs_f32();
+        transform.translation.z += y * time.delta().as_secs_f32();
+    }
+}
+
+/// Spawn a local player cube for local play
+fn local_spawn_player(
+    mut commands: Commands,
+    mut lobby: ResMut<Lobby>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    // Only spawn if no player exists in local lobby (using a reserved id, e.g. 0)
+    if lobby.players.is_empty() {
+        let local_client_id: ClientId = 0; // reserved id for local mode
+        let player_entity = commands
+            .spawn((
+                Mesh3d(meshes.add(Cuboid::from_size(Vec3::splat(1.0)))),
+                MeshMaterial3d(materials.add(Color::srgb(0.8, 0.7, 0.6))),
+                Transform::from_xyz(0.0, 0.5, 0.0),
+                PlayerInput::default(),
+            ))
+            .id();
+        lobby.players.insert(local_client_id, player_entity);
+        info!("Spawned local player with id {}", local_client_id);
+    }
+}
+
+/// Update local player's PlayerInput component from the global resource
+fn local_update_player_input(player_input_res: Res<PlayerInput>, lobby: Res<Lobby>, mut query: Query<&mut PlayerInput>) {
+    if let Some(&local_entity) = lobby.players.get(&0) {
+        if let Ok(mut component) = query.get_mut(local_entity) {
+            *component = player_input_res.clone();
+        }
+    }
 }
