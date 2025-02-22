@@ -1,14 +1,25 @@
+use once_cell::sync::Lazy;
+use std::env;
+use std::time::SystemTime;
+
 use bevy::{prelude::*, render::mesh::PlaneMeshBuilder};
 use bevy_renet::netcode::{ClientAuthentication, NetcodeClientPlugin, NetcodeClientTransport, NetcodeTransportError};
 use bevy_renet::renet::{ClientId, ConnectionConfig, DefaultChannel, RenetClient};
 use bevy_renet::{RenetClientPlugin, client_connected};
 use serde::{Deserialize, Serialize};
-use std::env;
-use std::time::SystemTime;
 use std::{collections::HashMap, net::UdpSocket};
-use std::{thread, time::Duration};
+use std::{thread, time::Duration}; // add import for global client id
 
 const PROTOCOL_ID: u64 = 7;
+pub static CLIENT_ID: Lazy<u64> = Lazy::new(|| {
+    env::var("CLIENT_ID")
+        .ok()
+        .and_then(|id_str| id_str.parse().ok())
+        .unwrap_or_else(|| {
+            let current_time = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap();
+            current_time.as_millis() as u64
+        })
+});
 
 #[derive(Debug, Default, Serialize, Deserialize, Component, Resource)]
 struct PlayerInput {
@@ -32,25 +43,21 @@ enum ServerMessages {
 /// Run bevy client
 fn main() {
     let mut app = App::new();
-    app.add_plugins(DefaultPlugins);
-    app.init_resource::<Lobby>();
+    let (renet_client, renet_transport) = new_renet_client();
 
-    app.add_plugins(RenetClientPlugin);
-    app.add_plugins(NetcodeClientPlugin);
-    app.init_resource::<PlayerInput>();
-    let (client, transport) = new_renet_client();
-    app.insert_resource(client);
-    app.insert_resource(transport);
-
-    app.add_systems(
-        Update,
-        (player_input, client_send_input, client_sync_players).run_if(client_connected),
-    );
-
-    app.add_systems(Startup, setup);
-    app.add_systems(Update, (reconnect_on_error_system, reconnect_check_system));
-
-    app.run();
+    app.add_plugins(DefaultPlugins)
+        .init_resource::<Lobby>()
+        .add_plugins((RenetClientPlugin, NetcodeClientPlugin))
+        .init_resource::<PlayerInput>()
+        .insert_resource(renet_client)
+        .insert_resource(renet_transport)
+        .add_systems(Startup, setup)
+        .add_systems(
+            Update,
+            (player_input, client_send_input, client_sync_players).run_if(client_connected),
+        )
+        .add_systems(Update, (reconnect_on_error_system, reconnect_check_system))
+        .run();
 }
 
 /// Create a new RenetClient and NetcodeClientTransport
@@ -58,16 +65,13 @@ fn new_renet_client() -> (RenetClient, NetcodeClientTransport) {
     let server_ip = env::var("SERVER_IP").unwrap_or_else(|_| "127.0.0.1".to_string());
     let server_port = env::var("SERVER_PORT").unwrap_or_else(|_| "5000".to_string());
     let server_addr = format!("{}:{}", server_ip, server_port).parse().unwrap();
+
     info!("Connecting to server at: {}", server_addr);
     let socket = UdpSocket::bind("0.0.0.0:0").unwrap();
     let current_time = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap();
-    // Reuse the same client id if provided via CLIENT_ID.
-    let client_id: u64 = env::var("CLIENT_ID")
-        .ok()
-        .and_then(|id_str| id_str.parse().ok())
-        .unwrap_or_else(|| current_time.as_millis() as u64);
+    let client_id = *CLIENT_ID;
+    info!("Using CLIENT_ID={}", client_id);
 
-    info!("Attempting to connect with CLIENT_ID={}", client_id);
     let authentication = ClientAuthentication::Unsecure {
         client_id,
         protocol_id: PROTOCOL_ID,

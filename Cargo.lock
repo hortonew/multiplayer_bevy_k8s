@@ -1527,6 +1527,7 @@ dependencies = [
  "bevy",
  "bevy_renet",
  "bincode",
+ "once_cell",
  "serde",
 ]
 

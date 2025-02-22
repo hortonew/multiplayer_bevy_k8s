@@ -7,4 +7,5 @@ edition = "2024"
 bevy = { version = "0.15" }
 bevy_renet = "1.0"
 bincode = "1.3"
+once_cell = "1.20"
 serde = { version = "1", features = ["derive"] }
