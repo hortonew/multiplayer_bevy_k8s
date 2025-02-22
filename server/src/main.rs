@@ -46,6 +46,7 @@ enum ServerMessages {
 /// Run bevy server
 fn main() {
     let mut app = App::new();
+    let (renet_server, renet_transport) = new_renet_server();
 
     // minimal plugins to work in a windowless environment
     app.add_plugins((
@@ -56,26 +57,18 @@ fn main() {
             task_pool_options: Default::default(),
         },
         LogPlugin::default(),
-    ));
-
-    app.add_plugins(ScheduleRunnerPlugin::run_loop(Duration::from_secs_f64(1.0 / 60.0)));
-    app.init_resource::<Lobby>();
-
-    app.add_plugins(RenetServerPlugin);
-    app.add_plugins(NetcodeServerPlugin);
-    let (server, transport) = new_renet_server();
-    app.insert_resource(server);
-    app.insert_resource(transport);
-
-    app.add_systems(
+    ))
+    .add_plugins(ScheduleRunnerPlugin::run_loop(Duration::from_secs_f64(1.0 / 60.0)))
+    .init_resource::<Lobby>()
+    .add_plugins((RenetServerPlugin, NetcodeServerPlugin))
+    .insert_resource(renet_server)
+    .insert_resource(renet_transport)
+    .add_systems(
         Update,
         (server_update_system, server_sync_players, move_players_system).run_if(resource_exists::<RenetServer>),
-    );
-
-    app.add_systems(Update, cleanup_disconnected_system);
-    app.add_systems(Update, panic_on_error_system);
-
-    app.run();
+    )
+    .add_systems(Update, (cleanup_disconnected_system, panic_on_error_system))
+    .run();
 }
 
 /// Create a new Renet server and Netcode transport.
