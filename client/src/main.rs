@@ -57,7 +57,7 @@ struct Lobby {
 
 #[derive(Debug, Serialize, Deserialize, Component)]
 enum ServerMessages {
-    PlayerConnected { id: ClientId },
+    PlayerConnected { id: ClientId, color: [f32; 4] },
     PlayerDisconnected { id: ClientId },
 }
 
@@ -100,7 +100,7 @@ fn main() {
     app.run();
 }
 
-/// Create a new RenetClient and NetcodeClientTransport using settings from ClientSettings.
+/// Create a new RenetClient and NetcodeClientTransport using settings from ClientSettings
 fn new_renet_client(settings: &ClientSettings) -> (RenetClient, NetcodeClientTransport) {
     let server_addr = format!("{}:{}", settings.server_ip, settings.server_port).parse().unwrap();
 
@@ -154,18 +154,18 @@ fn client_sync_players(
     mut initial_sync: ResMut<InitialSyncDone>, // added parameter
 ) {
     while let Some(message) = client.receive_message(DefaultChannel::ReliableOrdered) {
-        let server_message = bincode::deserialize(&message).unwrap();
+        let server_message: ServerMessages = bincode::deserialize(&message).unwrap();
         match server_message {
-            ServerMessages::PlayerConnected { id } => {
+            ServerMessages::PlayerConnected { id, color } => {
                 info!("Player {} connected.", id);
                 let player_entity = commands
                     .spawn((
                         Mesh3d(meshes.add(Cuboid::from_size(Vec3::splat(1.0)))),
-                        MeshMaterial3d(materials.add(Color::srgb(0.8, 0.7, 0.6))),
+                        // Use the color provided by the server.
+                        MeshMaterial3d(materials.add(Color::srgba(color[0], color[1], color[2], color[3]))),
                         Transform::from_xyz(0.0, 0.5, 0.0),
                     ))
                     .id();
-
                 lobby.players.insert(id, player_entity);
             }
             ServerMessages::PlayerDisconnected { id } => {
@@ -178,20 +178,25 @@ fn client_sync_players(
     }
 
     while let Some(message) = client.receive_message(DefaultChannel::Unreliable) {
-        let players: HashMap<ClientId, [f32; 3]> = bincode::deserialize(&message).unwrap();
-        for (player_id, translation) in players.iter() {
+        // Now each value is a tuple of (position, color).
+        let players: HashMap<ClientId, ([f32; 3], [f32; 4])> = bincode::deserialize(&message).unwrap();
+        for (player_id, (translation, color)) in players.iter() {
             if let Some(&player_entity) = lobby.players.get(player_id) {
-                let transform = Transform {
+                // Update transform...
+                commands.entity(player_entity).insert(Transform {
                     translation: (*translation).into(),
                     ..Default::default()
-                };
-                commands.entity(player_entity).insert(transform);
+                });
+                // Update color so that it stays in sync.
+                commands
+                    .entity(player_entity)
+                    .insert(MeshMaterial3d(materials.add(Color::srgba(color[0], color[1], color[2], color[3]))));
             } else if !initial_sync.0 {
-                // Only spawn missing players during initial sync.
+                // Spawn missing players during initial sync using the provided color.
                 let player_entity = commands
                     .spawn((
                         Mesh3d(meshes.add(Cuboid::from_size(Vec3::splat(1.0)))),
-                        MeshMaterial3d(materials.add(Color::srgb(0.8, 0.7, 0.6))),
+                        MeshMaterial3d(materials.add(Color::srgba(color[0], color[1], color[2], color[3]))),
                         Transform {
                             translation: (*translation).into(),
                             ..Default::default()
@@ -236,7 +241,7 @@ fn player_input(keyboard_input: Res<ButtonInput<KeyCode>>, mut player_input: Res
     player_input.down = keyboard_input.pressed(KeyCode::KeyS) || keyboard_input.pressed(KeyCode::ArrowDown);
 }
 
-/// Exit system that gracefully disconnects from renet on Escape key press.
+/// Exit system that gracefully disconnects from renet on Escape key press
 fn exit_system(keyboard_input: Res<ButtonInput<KeyCode>>, client: Option<ResMut<RenetClient>>, mut exit: EventWriter<AppExit>) {
     if keyboard_input.just_pressed(KeyCode::Escape) {
         println!("Exit requested. Disconnecting gracefully...");
@@ -327,7 +332,7 @@ fn reconnect_check_system(mut commands: Commands, client: Res<RenetClient>, time
     println!("✅ Reconnected to server!");
 }
 
-/// For local simulation, add a simple system that updates transformations using local input.
+/// For local simulation, add a simple system that updates transformations using local input
 fn local_move_players_system(mut query: Query<(&mut Transform, &PlayerInput)>, time: Res<Time>) {
     for (mut transform, input) in query.iter_mut() {
         let x = (input.right as i8 - input.left as i8) as f32;
