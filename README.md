@@ -4,6 +4,8 @@ The networking client/server example was taken from the [bevy_renet examples](ht
 
 Warning: This is not production ready, but I hope to keep adding examples on how to scale out the game servers, maintain state, reduce reconnects, etc.
 
+![Example](/images/example.gif)
+
 ## Status
 
 [![MIT licensed][mit-badge]][mit-url]

@@ -3,3 +3,4 @@
 .vscode
 /release
 loadtest.sh
+loadtest-remote.sh
