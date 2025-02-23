@@ -23,7 +23,7 @@ Warning: This is not production ready, but I hope to keep adding examples on how
 
 ```sh
 cargo run -p server
-cargo run -p client
+MULTIPLAYER=true cargo run -p client
 ```
 
 ### Local docker
@@ -40,6 +40,7 @@ cargo run -p client
 # Use a different server/port
 export SERVER_IP=a.b.c.d
 export SERVER_PORT=5000
+export MULTIPLAYER=true
 
 cargo build --release -p server
 ./target/release/server

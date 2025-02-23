@@ -59,4 +59,4 @@ server:
 
 client:
 	cargo build --release -p client
-	./target/release/client
+	MULTIPLAYER=true ./target/release/client
