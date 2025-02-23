@@ -23,7 +23,7 @@ spec:
     spec:
       containers:
       - name: multiplayer-bevy-server
-        image: hortonew/multiplayer-bevy-server:v0.4.0
+        image: hortonew/multiplayer-bevy-server:v0.5.1
         ports:
         - containerPort: 5000
         env:
@@ -33,6 +33,8 @@ spec:
           value: "10"
         - name: CLIENT_DISCONNECT_GRACE_PERIOD
           value: "10"
+        - name: PLAYER_MOVE_SPEED
+          value: "5.0"
         resources:
           requests:
             memory: "64Mi"

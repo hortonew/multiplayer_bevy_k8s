@@ -133,7 +133,7 @@ impl Default for ServerSettings {
         Self {
             port: env::var("SERVER_PORT").ok().and_then(|s| s.parse().ok()).unwrap_or(5000),
             max_clients: env::var("MAX_CLIENTS").ok().and_then(|s| s.parse().ok()).unwrap_or(64),
-            player_move_speed: 1.0,
+            player_move_speed: env::var("PLAYER_MOVE_SPEED").ok().and_then(|s| s.parse().ok()).unwrap_or(1.0),
             client_disconnect_grace_period: env::var("CLIENT_DISCONNECT_GRACE_PERIOD")
                 .ok()
                 .and_then(|s| s.parse().ok())
