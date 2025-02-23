@@ -61,6 +61,9 @@ enum ServerMessages {
     PlayerDisconnected { id: ClientId },
 }
 
+#[derive(Resource, Default)]
+struct InitialSyncDone(bool);
+
 /// Run bevy client
 fn main() {
     let client_settings = ClientSettings::default();
@@ -71,6 +74,7 @@ fn main() {
     app.add_plugins(DefaultPlugins)
         .init_resource::<Lobby>()
         .init_resource::<PlayerInput>()
+        .init_resource::<InitialSyncDone>()
         .insert_resource(client_settings.clone());
 
     if multiplayer {
@@ -147,6 +151,7 @@ fn client_sync_players(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut client: ResMut<RenetClient>,
     mut lobby: ResMut<Lobby>,
+    mut initial_sync: ResMut<InitialSyncDone>, // added parameter
 ) {
     while let Some(message) = client.receive_message(DefaultChannel::ReliableOrdered) {
         let server_message = bincode::deserialize(&message).unwrap();
@@ -181,8 +186,8 @@ fn client_sync_players(
                     ..Default::default()
                 };
                 commands.entity(player_entity).insert(transform);
-            } else {
-                // Spawn the missing player on new clients.
+            } else if !initial_sync.0 {
+                // Only spawn missing players during initial sync.
                 let player_entity = commands
                     .spawn((
                         Mesh3d(meshes.add(Cuboid::from_size(Vec3::splat(1.0)))),
@@ -196,6 +201,8 @@ fn client_sync_players(
                 lobby.players.insert(*player_id, player_entity);
             }
         }
+        // Mark initial sync complete so that new missing entries are ignored.
+        initial_sync.0 = true;
     }
 }
 
