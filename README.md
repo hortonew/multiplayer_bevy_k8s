@@ -1,13 +1,5 @@
 # Multiplayer Game in Bevy on Kubernetes
 
-The networking client/server example was taken from the [bevy_renet examples](https://github.com/lucaspoffo/renet/tree/master/bevy_renet/examples).  I reduced the crates needed and made it so it could run in a container.
-
-Warning: This is not production ready, but I hope to keep adding examples on how to scale out the game servers, maintain state, reduce reconnects, etc.
-
-![Example](/images/example.gif)
-
-## Status
-
 [![MIT licensed][mit-badge]][mit-url]
 [![Build Status][actions-badge]][actions-url]
 [![Docker][docker-badge]][docker-url]
@@ -19,13 +11,19 @@ Warning: This is not production ready, but I hope to keep adding examples on how
 [docker-badge]: https://img.shields.io/badge/dockerhub-images-important.svg?logo=Docker&color=blue
 [docker-url]: https://hub.docker.com/repository/docker/hortonew/multiplayer-bevy-server/general
 
+The networking client/server example was taken from the [bevy_renet examples](https://github.com/lucaspoffo/renet/tree/master/bevy_renet/examples).  I reduced the crates needed and made it so it could run in a container.
+
+Warning: This is not production ready, but I hope to keep adding examples on how to scale out the game servers, maintain state, reduce reconnects, etc.
+
+![Example](/images/example.gif)
+
 ## Run it
 
 ### Local
 
 ```sh
-cargo run -p server
-MULTIPLAYER=true cargo run -p client
+make server # one window
+make client # another window
 ```
 
 ### Local docker
@@ -78,3 +76,4 @@ kubectl apply -f k8s/manifests/multiplayer-game-service.yaml
 - Hand off client state to new pods during reconnects (maintain state elsewhere).  Thoughts:  sidecar container with API that can get/put state.  State could be stored in Redis, or similar services.
 - Terraform EKS build example
 - Work on a more realistic game example
+- CI/CD: Build release artifacts for Mac, Windows, Linux, Mobile
