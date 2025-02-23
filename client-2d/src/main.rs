@@ -2,7 +2,7 @@ use once_cell::sync::Lazy;
 use std::env;
 use std::time::SystemTime;
 
-use bevy::{app::AppExit, prelude::*, render::mesh::PlaneMeshBuilder};
+use bevy::{app::AppExit, prelude::*};
 use bevy_renet::netcode::{ClientAuthentication, NetcodeClientPlugin, NetcodeClientTransport, NetcodeTransportError};
 use bevy_renet::renet::{ClientId, ConnectionConfig, DefaultChannel, RenetClient};
 use bevy_renet::{RenetClientPlugin, client_connected};
@@ -67,7 +67,6 @@ struct InitialSyncDone(bool);
 /// Run bevy client
 fn main() {
     let client_settings = ClientSettings::default();
-    // Check MULTIPLAYER from environment, default false.
     let multiplayer = env::var("MULTIPLAYER").unwrap_or_default().to_lowercase() == "true";
 
     let mut app = App::new();
@@ -148,7 +147,7 @@ fn new_renet_client(settings: &ClientSettings) -> (RenetClient, NetcodeClientTra
 fn client_sync_players(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
     mut client: ResMut<RenetClient>,
     mut lobby: ResMut<Lobby>,
     mut initial_sync: ResMut<InitialSyncDone>, // added parameter
@@ -158,14 +157,8 @@ fn client_sync_players(
         match server_message {
             ServerMessages::PlayerConnected { id, color } => {
                 info!("Player {} connected.", id);
-                let player_entity = commands
-                    .spawn((
-                        Mesh3d(meshes.add(Cuboid::from_size(Vec3::splat(1.0)))),
-                        // Use the color provided by the server.
-                        MeshMaterial3d(materials.add(Color::srgba(color[0], color[1], color[2], color[3]))),
-                        Transform::from_xyz(0.0, 0.5, 0.0),
-                    ))
-                    .id();
+                // Map server translation: use x as x, server z as y, and set z=0.
+                let player_entity = commands.spawn(Mesh2d(meshes.add(Rectangle::new(25.0, 25.0)))).id();
                 lobby.players.insert(id, player_entity);
             }
             ServerMessages::PlayerDisconnected { id } => {
@@ -181,23 +174,26 @@ fn client_sync_players(
         // Now each value is a tuple of (position, color).
         let players: HashMap<ClientId, ([f32; 3], [f32; 4])> = bincode::deserialize(&message).unwrap();
         for (player_id, (translation, color)) in players.iter() {
+            // Flip the sign of the z coordinate to map correctly to 2d y.
+            let new_translation = Vec3::new(translation[0], -translation[2], 0.0);
             if let Some(&player_entity) = lobby.players.get(player_id) {
                 commands.entity(player_entity).insert(Transform {
-                    translation: (*translation).into(),
+                    translation: new_translation,
                     ..Default::default()
                 });
                 // Update color so that it stays in sync.
                 commands
                     .entity(player_entity)
-                    .insert(MeshMaterial3d(materials.add(Color::srgba(color[0], color[1], color[2], color[3]))));
+                    .insert(Mesh2d(meshes.add(Rectangle::new(25.0, 25.0))))
+                    .insert(MeshMaterial2d(materials.add(Color::srgba(color[0], color[1], color[2], color[3]))));
             } else if !initial_sync.0 {
                 // Spawn missing players during initial sync using the provided color.
                 let player_entity = commands
                     .spawn((
-                        Mesh3d(meshes.add(Cuboid::from_size(Vec3::splat(1.0)))),
-                        MeshMaterial3d(materials.add(Color::srgba(color[0], color[1], color[2], color[3]))),
+                        Mesh2d(meshes.add(Rectangle::new(25.0, 25.0))),
+                        MeshMaterial2d(materials.add(Color::srgba(color[0], color[1], color[2], color[3]))),
                         Transform {
-                            translation: (*translation).into(),
+                            translation: new_translation,
                             ..Default::default()
                         },
                     ))
@@ -211,25 +207,16 @@ fn client_sync_players(
 }
 
 /// Setup the scene
-fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>) {
-    // plane
-    commands.spawn((
-        Mesh3d(meshes.add(Mesh::from(PlaneMeshBuilder::from_size(Vec2::splat(5.0))))),
-        MeshMaterial3d(materials.add(Color::srgb(0.3, 0.5, 0.3))),
-    ));
-    // light
-    commands.spawn((
-        PointLight {
-            shadows_enabled: true,
-            ..default()
-        },
-        Transform::from_xyz(4.0, 8.0, 4.0),
-    ));
-    // camera
-    commands.spawn((
-        Camera3d::default(),
-        Transform::from_xyz(-2.0, 2.5, 5.0).looking_at(Vec3::ZERO, Vec3::Y),
-    ));
+fn setup(mut commands: Commands) {
+    // // light
+    // commands.spawn((
+    //     PointLight {
+    //         shadows_enabled: true,
+    //         ..default()
+    //     },
+    //     Transform::from_xyz(4.0, 8.0, 4.0),
+    // ));
+    commands.spawn(Camera2d);
 }
 
 /// Update the player input
@@ -337,25 +324,19 @@ fn local_move_players_system(mut query: Query<(&mut Transform, &PlayerInput)>, t
         let x = (input.right as i8 - input.left as i8) as f32;
         let y = (input.down as i8 - input.up as i8) as f32;
         transform.translation.x += x * time.delta().as_secs_f32();
-        transform.translation.z += y * time.delta().as_secs_f32();
+        transform.translation.y += y * time.delta().as_secs_f32();
     }
 }
 
 /// Spawn a local player cube for local play
-fn local_spawn_player(
-    mut commands: Commands,
-    mut lobby: ResMut<Lobby>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-) {
+fn local_spawn_player(mut commands: Commands, mut lobby: ResMut<Lobby>, mut meshes: ResMut<Assets<Mesh>>) {
     // Only spawn if no player exists in local lobby (using a reserved id, e.g. 0)
     if lobby.players.is_empty() {
         let local_client_id: ClientId = 0; // reserved id for local mode
         let player_entity = commands
             .spawn((
-                Mesh3d(meshes.add(Cuboid::from_size(Vec3::splat(1.0)))),
-                MeshMaterial3d(materials.add(Color::srgb(0.8, 0.7, 0.6))),
-                Transform::from_xyz(0.0, 0.5, 0.0),
+                Mesh2d(meshes.add(Rectangle::new(25.0, 25.0))),
+                Transform::from_xyz(0.0, 0.0, 0.0),
                 PlayerInput::default(),
             ))
             .id();

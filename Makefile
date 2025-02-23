@@ -1,4 +1,4 @@
-.PHONY: build-release test build-server-container run-server clean doc start-kind stop-kind server client
+.PHONY: build-release test build-server-container run-server clean doc start-kind stop-kind server client client2d
 
 BINARY_NAME := server
 CONTAINER_NAME := multiplayer-bevy-server
@@ -60,3 +60,7 @@ server:
 client:
 	cargo build --release -p client
 	MULTIPLAYER=true ./target/release/client
+
+client2d:
+	cargo build --release -p client-2d
+	MULTIPLAYER=true ./target/release/client-2d
