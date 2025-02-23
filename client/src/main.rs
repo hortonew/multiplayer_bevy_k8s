@@ -175,12 +175,25 @@ fn client_sync_players(
     while let Some(message) = client.receive_message(DefaultChannel::Unreliable) {
         let players: HashMap<ClientId, [f32; 3]> = bincode::deserialize(&message).unwrap();
         for (player_id, translation) in players.iter() {
-            if let Some(player_entity) = lobby.players.get(player_id) {
+            if let Some(&player_entity) = lobby.players.get(player_id) {
                 let transform = Transform {
                     translation: (*translation).into(),
                     ..Default::default()
                 };
-                commands.entity(*player_entity).insert(transform);
+                commands.entity(player_entity).insert(transform);
+            } else {
+                // Spawn the missing player on new clients.
+                let player_entity = commands
+                    .spawn((
+                        Mesh3d(meshes.add(Cuboid::from_size(Vec3::splat(1.0)))),
+                        MeshMaterial3d(materials.add(Color::srgb(0.8, 0.7, 0.6))),
+                        Transform {
+                            translation: (*translation).into(),
+                            ..Default::default()
+                        },
+                    ))
+                    .id();
+                lobby.players.insert(*player_id, player_entity);
             }
         }
     }

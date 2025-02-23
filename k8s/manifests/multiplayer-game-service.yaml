@@ -32,7 +32,7 @@ spec:
         - name: MAX_CLIENTS
           value: "10"
         - name: CLIENT_DISCONNECT_GRACE_PERIOD
-          value: "30"
+          value: "10"
         resources:
           requests:
             memory: "64Mi"
