@@ -34,7 +34,7 @@ spec:
         - name: CLIENT_DISCONNECT_GRACE_PERIOD
           value: "10"
         - name: PLAYER_MOVE_SPEED
-          value: "5.0"
+          value: "150.0"
         resources:
           requests:
             memory: "64Mi"

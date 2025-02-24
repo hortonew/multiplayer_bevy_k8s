@@ -55,7 +55,7 @@ doc:
 
 server:
 	cargo build --release -p server
-	./target/release/server
+	PLAYER_MOVE_SPEED=150.0 CLIENT_DISCONNECT_GRACE_PERIOD=5.0 ./target/release/server
 
 client:
 	cargo build --release -p client

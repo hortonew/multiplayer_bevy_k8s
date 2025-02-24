@@ -2,6 +2,8 @@ use once_cell::sync::Lazy;
 use std::env;
 use std::time::SystemTime;
 
+use bevy::render::texture::ImagePlugin;
+use bevy::sprite::{Sprite, TextureAtlas};
 use bevy::{app::AppExit, prelude::*};
 use bevy_renet::netcode::{ClientAuthentication, NetcodeClientPlugin, NetcodeClientTransport, NetcodeTransportError};
 use bevy_renet::renet::{ClientId, ConnectionConfig, DefaultChannel, RenetClient};
@@ -29,6 +31,7 @@ struct ClientSettings {
     initial_delay: Duration,
     server_ip: String,
     server_port: String,
+    sprite_size: Vec2,
 }
 
 impl Default for ClientSettings {
@@ -38,6 +41,7 @@ impl Default for ClientSettings {
             initial_delay: Duration::from_secs(1),
             server_ip: env::var("SERVER_IP").unwrap_or_else(|_| "127.0.0.1".to_string()),
             server_port: env::var("SERVER_PORT").unwrap_or_else(|_| "5000".to_string()),
+            sprite_size: Vec2::new(64.0, 64.0),
         }
     }
 }
@@ -64,18 +68,57 @@ enum ServerMessages {
 #[derive(Resource, Default)]
 struct InitialSyncDone(bool);
 
+// New components for animation
+#[derive(Component)]
+struct AnimationIndices {
+    first: usize,
+    last: usize,
+}
+
+#[derive(Component, Deref, DerefMut)]
+struct AnimationTimer(Timer);
+
+// New resource to hold the TextureAtlas handle
+#[derive(Resource)]
+struct GabeAsset {
+    texture: Handle<Image>,
+    layout: Handle<TextureAtlasLayout>,
+}
+
+// New system to animate the sprite
+fn animate_sprite(time: Res<Time>, mut query: Query<(&AnimationIndices, &mut AnimationTimer, &mut Sprite)>) {
+    for (indices, mut timer, mut sprite) in &mut query {
+        timer.tick(time.delta());
+
+        if timer.just_finished() {
+            if let Some(atlas) = &mut sprite.texture_atlas {
+                atlas.index = if atlas.index == indices.last {
+                    indices.first
+                } else {
+                    atlas.index + 1
+                };
+            }
+        }
+    }
+}
+
 /// Run bevy client
 fn main() {
     let client_settings = ClientSettings::default();
     let multiplayer = env::var("MULTIPLAYER").unwrap_or_default().to_lowercase() == "true";
 
     let mut app = App::new();
-    app.add_plugins(DefaultPlugins)
-        .init_resource::<Lobby>()
-        .init_resource::<PlayerInput>()
-        .init_resource::<InitialSyncDone>()
-        .insert_resource(client_settings.clone());
+    app.add_plugins(
+        DefaultPlugins
+            // Prevent blurry sprites.
+            .set(ImagePlugin::default_nearest()),
+    )
+    .init_resource::<Lobby>()
+    .init_resource::<PlayerInput>()
+    .init_resource::<InitialSyncDone>()
+    .insert_resource(client_settings.clone());
 
+    // Register setup and animation system.
     if multiplayer {
         // Multiplayer: initialize renet client and add network plugins/systems.
         let (renet_client, renet_transport) = new_renet_client(&client_settings);
@@ -83,6 +126,7 @@ fn main() {
             .insert_resource(renet_transport)
             .add_plugins((RenetClientPlugin, NetcodeClientPlugin))
             .add_systems(Startup, setup)
+            .add_systems(Update, animate_sprite)
             .add_systems(
                 Update,
                 (player_input, client_send_input, client_sync_players).run_if(client_connected),
@@ -90,10 +134,18 @@ fn main() {
             .add_systems(Update, (reconnect_on_error_system, reconnect_check_system, exit_system));
     } else {
         // Local mode: spawn local player, update input, then move the player.
-        app.add_systems(Startup, (setup, local_spawn_player)).add_systems(
-            Update,
-            (player_input, exit_system, local_update_player_input, local_move_players_system),
-        );
+        app.add_systems(Startup, setup)
+            .add_systems(Startup, local_spawn_player.after(setup))
+            .add_systems(
+                Update,
+                (
+                    player_input,
+                    exit_system,
+                    local_update_player_input,
+                    local_move_players_system,
+                    animate_sprite,
+                ),
+            );
     }
 
     app.run();
@@ -146,19 +198,34 @@ fn new_renet_client(settings: &ClientSettings) -> (RenetClient, NetcodeClientTra
 /// Sync player with the server
 fn client_sync_players(
     mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<ColorMaterial>>,
     mut client: ResMut<RenetClient>,
     mut lobby: ResMut<Lobby>,
-    mut initial_sync: ResMut<InitialSyncDone>, // added parameter
+    mut initial_sync: ResMut<InitialSyncDone>,
+    gabe_asset: Res<GabeAsset>,
+    settings: Res<ClientSettings>,
 ) {
     while let Some(message) = client.receive_message(DefaultChannel::ReliableOrdered) {
         let server_message: ServerMessages = bincode::deserialize(&message).unwrap();
         match server_message {
-            ServerMessages::PlayerConnected { id, color } => {
+            ServerMessages::PlayerConnected { id, color: _ } => {
                 info!("Player {} connected.", id);
-                // Map server translation: use x as x, server z as y, and set z=0.
-                let player_entity = commands.spawn(Mesh2d(meshes.add(Rectangle::new(25.0, 25.0)))).id();
+                let mut sprite = Sprite::from_atlas_image(
+                    gabe_asset.texture.clone(),
+                    TextureAtlas {
+                        layout: gabe_asset.layout.clone(),
+                        index: 1,
+                    },
+                );
+                // Resize the sprite using the resource's sprite_size
+                sprite.custom_size = Some(settings.sprite_size);
+                let player_entity = commands
+                    .spawn((
+                        sprite,
+                        Transform::from_scale(Vec3::splat(6.0)),
+                        AnimationIndices { first: 1, last: 6 },
+                        AnimationTimer(Timer::from_seconds(0.1, TimerMode::Repeating)),
+                    ))
+                    .id();
                 lobby.players.insert(id, player_entity);
             }
             ServerMessages::PlayerDisconnected { id } => {
@@ -171,52 +238,53 @@ fn client_sync_players(
     }
 
     while let Some(message) = client.receive_message(DefaultChannel::Unreliable) {
-        // Now each value is a tuple of (position, color).
         let players: HashMap<ClientId, ([f32; 3], [f32; 4])> = bincode::deserialize(&message).unwrap();
-        for (player_id, (translation, color)) in players.iter() {
-            // Flip the sign of the z coordinate to map correctly to 2d y.
+        for (player_id, (translation, _color)) in players.iter() {
             let new_translation = Vec3::new(translation[0], -translation[2], 0.0);
             if let Some(&player_entity) = lobby.players.get(player_id) {
+                // Only update transform
                 commands.entity(player_entity).insert(Transform {
                     translation: new_translation,
                     ..Default::default()
                 });
-                // Update color so that it stays in sync.
-                commands
-                    .entity(player_entity)
-                    .insert(Mesh2d(meshes.add(Rectangle::new(25.0, 25.0))))
-                    .insert(MeshMaterial2d(materials.add(Color::srgba(color[0], color[1], color[2], color[3]))));
             } else if !initial_sync.0 {
-                // Spawn missing players during initial sync using the provided color.
+                let mut sprite = Sprite::from_atlas_image(
+                    gabe_asset.texture.clone(),
+                    TextureAtlas {
+                        layout: gabe_asset.layout.clone(),
+                        index: 1,
+                    },
+                );
+                sprite.custom_size = Some(settings.sprite_size);
                 let player_entity = commands
                     .spawn((
-                        Mesh2d(meshes.add(Rectangle::new(25.0, 25.0))),
-                        MeshMaterial2d(materials.add(Color::srgba(color[0], color[1], color[2], color[3]))),
+                        sprite,
                         Transform {
                             translation: new_translation,
+                            scale: Vec3::splat(6.0),
                             ..Default::default()
                         },
+                        AnimationIndices { first: 1, last: 6 },
+                        AnimationTimer(Timer::from_seconds(0.1, TimerMode::Repeating)),
                     ))
                     .id();
                 lobby.players.insert(*player_id, player_entity);
             }
         }
-        // Mark initial sync complete so that new missing entries are ignored.
         initial_sync.0 = true;
     }
 }
 
 /// Setup the scene
-fn setup(mut commands: Commands) {
-    // // light
-    // commands.spawn((
-    //     PointLight {
-    //         shadows_enabled: true,
-    //         ..default()
-    //     },
-    //     Transform::from_xyz(4.0, 8.0, 4.0),
-    // ));
+fn setup(mut commands: Commands, asset_server: Res<AssetServer>, mut texture_atlas_layouts: ResMut<Assets<TextureAtlasLayout>>) {
     commands.spawn(Camera2d);
+    let texture = asset_server.load("player.png");
+    let layout = TextureAtlasLayout::from_grid(UVec2::splat(24), 7, 1, None, None);
+    let layout_handle = texture_atlas_layouts.add(layout);
+    commands.insert_resource(GabeAsset {
+        texture,
+        layout: layout_handle,
+    });
 }
 
 /// Update the player input
@@ -274,6 +342,7 @@ fn reconnect_on_error_system(
             initial_delay: Duration::from_secs(1),
             server_ip: env::var("SERVER_IP").unwrap_or_else(|_| "127.0.0.1".to_string()),
             server_port: env::var("SERVER_PORT").unwrap_or_else(|_| "5000".to_string()),
+            sprite_size: Vec2::new(64.0, 64.0),
         });
 
         // Re-insert the new client resources
@@ -309,6 +378,7 @@ fn reconnect_check_system(mut commands: Commands, client: Res<RenetClient>, time
         initial_delay: Duration::from_secs(1),
         server_ip: env::var("SERVER_IP").unwrap_or_else(|_| "127.0.0.1".to_string()),
         server_port: env::var("SERVER_PORT").unwrap_or_else(|_| "5000".to_string()),
+        sprite_size: Vec2::new(64.0, 64.0),
     });
 
     // Reinsert the new client
@@ -329,15 +399,23 @@ fn local_move_players_system(mut query: Query<(&mut Transform, &PlayerInput)>, t
 }
 
 /// Spawn a local player cube for local play
-fn local_spawn_player(mut commands: Commands, mut lobby: ResMut<Lobby>, mut meshes: ResMut<Assets<Mesh>>) {
-    // Only spawn if no player exists in local lobby (using a reserved id, e.g. 0)
+fn local_spawn_player(mut commands: Commands, mut lobby: ResMut<Lobby>, gabe_asset: Res<GabeAsset>) {
     if lobby.players.is_empty() {
-        let local_client_id: ClientId = 0; // reserved id for local mode
+        let local_client_id: ClientId = 0;
+        let sprite = Sprite::from_atlas_image(
+            gabe_asset.texture.clone(),
+            TextureAtlas {
+                layout: gabe_asset.layout.clone(),
+                index: 1,
+            },
+        );
         let player_entity = commands
             .spawn((
-                Mesh2d(meshes.add(Rectangle::new(25.0, 25.0))),
-                Transform::from_xyz(0.0, 0.0, 0.0),
+                sprite,
+                Transform::from_scale(Vec3::splat(6.0)),
                 PlayerInput::default(),
+                AnimationIndices { first: 1, last: 6 },
+                AnimationTimer(Timer::from_seconds(0.1, TimerMode::Repeating)),
             ))
             .id();
         lobby.players.insert(local_client_id, player_entity);

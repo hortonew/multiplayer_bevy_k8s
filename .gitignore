@@ -4,3 +4,4 @@
 /release
 loadtest.sh
 loadtest-remote.sh
+loadtest-remote-2d.sh
