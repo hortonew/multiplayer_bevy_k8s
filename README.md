@@ -22,8 +22,8 @@ Warning: This is not production ready, but I hope to keep adding examples on how
 ### Local
 
 ```sh
-make server # one window
-make client # another window
+just server # one window
+just client # another window
 ```
 
 ### Local docker
