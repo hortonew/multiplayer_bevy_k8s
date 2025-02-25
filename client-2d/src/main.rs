@@ -80,23 +80,95 @@ struct AnimationTimer(Timer);
 
 // New resource to hold the TextureAtlas handle
 #[derive(Resource)]
-struct GabeAsset {
+struct PlayerAsset {
     texture: Handle<Image>,
     layout: Handle<TextureAtlasLayout>,
+}
+
+#[derive(Resource)]
+enum Direction {
+    Left,
+    Right,
+}
+
+// New resource to track last horizontal direction.
+#[derive(Resource, Default)]
+struct LastDirection(Option<Direction>);
+
+// New resource that holds the animation index configurations.
+#[derive(Resource)]
+struct AnimationConfig {
+    idle_right: (usize, usize),
+    idle_left: (usize, usize),
+    run_right: (usize, usize),
+    run_left: (usize, usize),
+}
+
+// Insert default values (adjust as needed).
+impl Default for AnimationConfig {
+    fn default() -> Self {
+        Self {
+            idle_right: (0, 0),
+            idle_left: (7, 7),
+            run_right: (1, 6),
+            run_left: (8, 13),
+        }
+    }
 }
 
 // New system to animate the sprite
 fn animate_sprite(time: Res<Time>, mut query: Query<(&AnimationIndices, &mut AnimationTimer, &mut Sprite)>) {
     for (indices, mut timer, mut sprite) in &mut query {
         timer.tick(time.delta());
-
         if timer.just_finished() {
             if let Some(atlas) = &mut sprite.texture_atlas {
-                atlas.index = if atlas.index == indices.last {
-                    indices.first
+                // Ensure index is within the expected range.
+                if atlas.index < indices.first || atlas.index >= indices.last {
+                    atlas.index = indices.first;
                 } else {
-                    atlas.index + 1
-                };
+                    atlas.index += 1;
+                }
+            }
+        }
+    }
+}
+
+// Composite system to update AnimationIndices based on player input and LastDirection.
+fn update_direction_and_indices(
+    player_input: Res<PlayerInput>,
+    mut last_direction: ResMut<LastDirection>,
+    animation_config: Res<AnimationConfig>,
+    mut query: Query<&mut AnimationIndices>,
+) {
+    if player_input.left {
+        *last_direction = LastDirection(Some(Direction::Left));
+        let (first, last_val) = animation_config.run_left;
+        for mut indices in query.iter_mut() {
+            indices.first = first;
+            indices.last = last_val;
+        }
+    } else if player_input.right {
+        *last_direction = LastDirection(Some(Direction::Right));
+        let (first, last_val) = animation_config.run_right;
+        for mut indices in query.iter_mut() {
+            indices.first = first;
+            indices.last = last_val;
+        }
+    } else if let Some(dir) = &last_direction.0 {
+        match dir {
+            Direction::Left => {
+                let (first, last_val) = animation_config.idle_left;
+                for mut indices in query.iter_mut() {
+                    indices.first = first;
+                    indices.last = last_val;
+                }
+            }
+            Direction::Right => {
+                let (first, last_val) = animation_config.idle_right;
+                for mut indices in query.iter_mut() {
+                    indices.first = first;
+                    indices.last = last_val;
+                }
             }
         }
     }
@@ -116,7 +188,9 @@ fn main() {
     .init_resource::<Lobby>()
     .init_resource::<PlayerInput>()
     .init_resource::<InitialSyncDone>()
-    .insert_resource(client_settings.clone());
+    .init_resource::<LastDirection>() // initialize LastDirection.
+    .insert_resource(client_settings.clone())
+    .insert_resource(AnimationConfig::default()); // add AnimationConfig
 
     // Register setup and animation system.
     if multiplayer {
@@ -129,7 +203,7 @@ fn main() {
             .add_systems(Update, animate_sprite)
             .add_systems(
                 Update,
-                (player_input, client_send_input, client_sync_players).run_if(client_connected),
+                (player_input, client_send_input, client_sync_players, update_direction_and_indices).run_if(client_connected),
             )
             .add_systems(Update, (reconnect_on_error_system, reconnect_check_system, exit_system));
     } else {
@@ -144,6 +218,7 @@ fn main() {
                     local_update_player_input,
                     local_move_players_system,
                     animate_sprite,
+                    update_direction_and_indices, // new composite system here
                 ),
             );
     }
@@ -201,8 +276,9 @@ fn client_sync_players(
     mut client: ResMut<RenetClient>,
     mut lobby: ResMut<Lobby>,
     mut initial_sync: ResMut<InitialSyncDone>,
-    gabe_asset: Res<GabeAsset>,
+    player_asset: Res<PlayerAsset>,
     settings: Res<ClientSettings>,
+    anim_config: Res<AnimationConfig>,
 ) {
     while let Some(message) = client.receive_message(DefaultChannel::ReliableOrdered) {
         let server_message: ServerMessages = bincode::deserialize(&message).unwrap();
@@ -210,19 +286,19 @@ fn client_sync_players(
             ServerMessages::PlayerConnected { id, color: _ } => {
                 info!("Player {} connected.", id);
                 let mut sprite = Sprite::from_atlas_image(
-                    gabe_asset.texture.clone(),
+                    player_asset.texture.clone(),
                     TextureAtlas {
-                        layout: gabe_asset.layout.clone(),
+                        layout: player_asset.layout.clone(),
                         index: 1,
                     },
                 );
-                // Resize the sprite using the resource's sprite_size
                 sprite.custom_size = Some(settings.sprite_size);
+                let (first, last_val) = anim_config.idle_right;
                 let player_entity = commands
                     .spawn((
                         sprite,
                         Transform::from_scale(Vec3::splat(6.0)),
-                        AnimationIndices { first: 1, last: 6 },
+                        AnimationIndices { first, last: last_val },
                         AnimationTimer(Timer::from_seconds(0.1, TimerMode::Repeating)),
                     ))
                     .id();
@@ -249,13 +325,15 @@ fn client_sync_players(
                 });
             } else if !initial_sync.0 {
                 let mut sprite = Sprite::from_atlas_image(
-                    gabe_asset.texture.clone(),
+                    player_asset.texture.clone(),
                     TextureAtlas {
-                        layout: gabe_asset.layout.clone(),
+                        layout: player_asset.layout.clone(),
                         index: 1,
                     },
                 );
                 sprite.custom_size = Some(settings.sprite_size);
+                let (first, last_val) = anim_config.idle_right;
+                // Spawn using idle indices.
                 let player_entity = commands
                     .spawn((
                         sprite,
@@ -264,7 +342,7 @@ fn client_sync_players(
                             scale: Vec3::splat(6.0),
                             ..Default::default()
                         },
-                        AnimationIndices { first: 1, last: 6 },
+                        AnimationIndices { first, last: last_val },
                         AnimationTimer(Timer::from_seconds(0.1, TimerMode::Repeating)),
                     ))
                     .id();
@@ -279,9 +357,9 @@ fn client_sync_players(
 fn setup(mut commands: Commands, asset_server: Res<AssetServer>, mut texture_atlas_layouts: ResMut<Assets<TextureAtlasLayout>>) {
     commands.spawn(Camera2d);
     let texture = asset_server.load("player.png");
-    let layout = TextureAtlasLayout::from_grid(UVec2::splat(24), 7, 1, None, None);
+    let layout = TextureAtlasLayout::from_grid(UVec2::splat(24), 7, 2, None, None);
     let layout_handle = texture_atlas_layouts.add(layout);
-    commands.insert_resource(GabeAsset {
+    commands.insert_resource(PlayerAsset {
         texture,
         layout: layout_handle,
     });
@@ -399,27 +477,28 @@ fn local_move_players_system(mut query: Query<(&mut Transform, &PlayerInput)>, t
 }
 
 /// Spawn a local player cube for local play
-fn local_spawn_player(mut commands: Commands, mut lobby: ResMut<Lobby>, gabe_asset: Res<GabeAsset>) {
+fn local_spawn_player(mut commands: Commands, mut lobby: ResMut<Lobby>, player_asset: Res<PlayerAsset>, anim_config: Res<AnimationConfig>) {
     if lobby.players.is_empty() {
         let local_client_id: ClientId = 0;
         let sprite = Sprite::from_atlas_image(
-            gabe_asset.texture.clone(),
+            player_asset.texture.clone(),
             TextureAtlas {
-                layout: gabe_asset.layout.clone(),
+                layout: player_asset.layout.clone(),
                 index: 1,
             },
         );
+        let (first, last_val) = anim_config.idle_right; // default idle for local player.
         let player_entity = commands
             .spawn((
                 sprite,
                 Transform::from_scale(Vec3::splat(6.0)),
                 PlayerInput::default(),
-                AnimationIndices { first: 1, last: 6 },
+                AnimationIndices { first, last: last_val },
                 AnimationTimer(Timer::from_seconds(0.1, TimerMode::Repeating)),
             ))
             .id();
         lobby.players.insert(local_client_id, player_entity);
-        info!("Spawned local player with id {}", local_client_id);
+        info!("Spawned local player with id {} using idle right: index {}", local_client_id, first);
     }
 }
 
