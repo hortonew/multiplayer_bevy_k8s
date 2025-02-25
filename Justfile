@@ -46,9 +46,10 @@ server:
 # build and run the client and connect to local server
 client:
 	cargo build --release -p client
-	MULTIPLAYER=true ./target/release/client
+	MULTIPLAYER=true cargo run -p client
 
 # build and run the 2d client and connect to local server
 client2d:
 	cargo build --release -p client-2d
-	MULTIPLAYER=true ./target/release/client-2d
+	MULTIPLAYER=true cargo run -p client-2d
+

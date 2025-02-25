@@ -89,6 +89,7 @@ struct PlayerAsset {
 enum Direction {
     Left,
     Right,
+    Up,
 }
 
 // New resource to track last horizontal direction.
@@ -100,8 +101,10 @@ struct LastDirection(Option<Direction>);
 struct AnimationConfig {
     idle_right: (usize, usize),
     idle_left: (usize, usize),
+    idle_up: (usize, usize),
     run_right: (usize, usize),
     run_left: (usize, usize),
+    run_up: (usize, usize),
 }
 
 // Insert default values (adjust as needed).
@@ -109,9 +112,11 @@ impl Default for AnimationConfig {
     fn default() -> Self {
         Self {
             idle_right: (0, 0),
-            idle_left: (7, 7),
             run_right: (1, 6),
+            idle_left: (7, 7),
             run_left: (8, 13),
+            idle_up: (14, 14),
+            run_up: (15, 20),
         }
     }
 }
@@ -154,6 +159,13 @@ fn update_direction_and_indices(
             indices.first = first;
             indices.last = last_val;
         }
+    } else if player_input.up {
+        *last_direction = LastDirection(Some(Direction::Up));
+        let (first, last_val) = animation_config.run_up;
+        for mut indices in query.iter_mut() {
+            indices.first = first;
+            indices.last = last_val;
+        }
     } else if let Some(dir) = &last_direction.0 {
         match dir {
             Direction::Left => {
@@ -165,6 +177,13 @@ fn update_direction_and_indices(
             }
             Direction::Right => {
                 let (first, last_val) = animation_config.idle_right;
+                for mut indices in query.iter_mut() {
+                    indices.first = first;
+                    indices.last = last_val;
+                }
+            }
+            Direction::Up => {
+                let (first, last_val) = animation_config.idle_up;
                 for mut indices in query.iter_mut() {
                     indices.first = first;
                     indices.last = last_val;
@@ -357,7 +376,9 @@ fn client_sync_players(
 fn setup(mut commands: Commands, asset_server: Res<AssetServer>, mut texture_atlas_layouts: ResMut<Assets<TextureAtlasLayout>>) {
     commands.spawn(Camera2d);
     let texture = asset_server.load("player.png");
-    let layout = TextureAtlasLayout::from_grid(UVec2::splat(24), 7, 2, None, None);
+    let num_columns = 7;
+    let num_rows = 3; // right, left, up layers
+    let layout = TextureAtlasLayout::from_grid(UVec2::splat(24), num_columns, num_rows, None, None);
     let layout_handle = texture_atlas_layouts.add(layout);
     commands.insert_resource(PlayerAsset {
         texture,
