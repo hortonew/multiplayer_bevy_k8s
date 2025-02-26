@@ -3,6 +3,7 @@
 [![MIT licensed][mit-badge]][mit-url]
 [![Build Status][actions-badge]][actions-url]
 [![Docker][docker-badge]][docker-url]
+[![Mentioned In: This Week in Bevy][bevy-badge]][bevy-url]
 
 [mit-badge]: https://img.shields.io/badge/license-MIT-blue.svg
 [mit-url]: https://github.com/hortonew/multiplayer_bevy_k8s/blob/main/LICENSE
@@ -10,6 +11,8 @@
 [actions-url]: https://github.com/hortonew/multiplayer_bevy_k8s/actions
 [docker-badge]: https://img.shields.io/badge/dockerhub-images-important.svg?logo=Docker&color=blue
 [docker-url]: https://hub.docker.com/repository/docker/hortonew/multiplayer-bevy-server/general
+[bevy-badge]: https://img.shields.io/badge/mentioned_in-this_week_in_bevy-5620FF
+[bevy-url]: https://thisweekinbevy.com/issue/2025-02-24-occlusion-culling-procedural-generation-and-skyboxes
 
 The networking client/server example was taken from the [bevy_renet examples](https://github.com/lucaspoffo/renet/tree/master/bevy_renet/examples).  I reduced the crates needed and made it so it could run in a container.
 
