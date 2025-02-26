@@ -67,7 +67,6 @@ struct InitialSyncDone(bool);
 /// Run bevy client
 fn main() {
     let client_settings = ClientSettings::default();
-    // Check MULTIPLAYER from environment, default false.
     let multiplayer = env::var("MULTIPLAYER").unwrap_or_default().to_lowercase() == "true";
 
     let mut app = App::new();
@@ -78,7 +77,6 @@ fn main() {
         .insert_resource(client_settings.clone());
 
     if multiplayer {
-        // Multiplayer: initialize renet client and add network plugins/systems.
         let (renet_client, renet_transport) = new_renet_client(&client_settings);
         app.insert_resource(renet_client)
             .insert_resource(renet_transport)

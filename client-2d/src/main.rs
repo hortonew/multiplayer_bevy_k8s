@@ -90,6 +90,7 @@ enum Direction {
     Left,
     Right,
     Up,
+    Down,
 }
 
 // New resource to track last horizontal direction.
@@ -102,9 +103,11 @@ struct AnimationConfig {
     idle_right: (usize, usize),
     idle_left: (usize, usize),
     idle_up: (usize, usize),
+    idle_down: (usize, usize),
     run_right: (usize, usize),
     run_left: (usize, usize),
     run_up: (usize, usize),
+    run_down: (usize, usize),
 }
 
 // Insert default values (adjust as needed).
@@ -117,6 +120,8 @@ impl Default for AnimationConfig {
             run_left: (8, 13),
             idle_up: (14, 14),
             run_up: (15, 20),
+            idle_down: (21, 21),
+            run_down: (22, 27),
         }
     }
 }
@@ -169,6 +174,13 @@ fn update_direction_and_indices(
             indices.first = first;
             indices.last = last_val;
         }
+    } else if player_input.down {
+        *last_direction = LastDirection(Some(Direction::Down));
+        let (first, last_val) = animation_config.run_down;
+        for mut indices in query.iter_mut() {
+            indices.first = first;
+            indices.last = last_val;
+        }
     } else if let Some(dir) = &last_direction.0 {
         match dir {
             Direction::Left => {
@@ -192,6 +204,13 @@ fn update_direction_and_indices(
                     indices.last = last_val;
                 }
             }
+            Direction::Down => {
+                let (first, last_val) = animation_config.idle_down;
+                for mut indices in query.iter_mut() {
+                    indices.first = first;
+                    indices.last = last_val;
+                }
+            }
         }
     }
 }
@@ -209,7 +228,6 @@ fn update_remote_player_animation(
     for (transform, mut indices, mut prev) in query.iter_mut() {
         let delta = transform.translation - prev.0;
         if delta.length() > threshold {
-            // Determine dominant axis.
             if delta.x.abs() > delta.y.abs() {
                 if delta.x > 0.0 {
                     indices.first = animation_config.run_right.0;
@@ -221,13 +239,12 @@ fn update_remote_player_animation(
             } else if delta.y > 0.0 {
                 indices.first = animation_config.run_up.0;
                 indices.last = animation_config.run_up.1;
-            } else {
-                // For down, default to idle_right.
-                indices.first = animation_config.idle_right.0;
-                indices.last = animation_config.idle_right.1;
+            } else if delta.y < 0.0 {
+                indices.first = animation_config.run_down.0;
+                indices.last = animation_config.run_down.1;
             }
         } else {
-            // Not moving: decide idle based on current indices.
+            // When not moving, fallback to idle state based on previous movement.
             if indices.first == animation_config.run_right.0 {
                 indices.first = animation_config.idle_right.0;
                 indices.last = animation_config.idle_right.1;
@@ -237,6 +254,9 @@ fn update_remote_player_animation(
             } else if indices.first == animation_config.run_up.0 {
                 indices.first = animation_config.idle_up.0;
                 indices.last = animation_config.idle_up.1;
+            } else if indices.first == animation_config.run_down.0 {
+                indices.first = animation_config.idle_down.0;
+                indices.last = animation_config.idle_down.1;
             }
         }
         prev.0 = transform.translation;
@@ -438,7 +458,7 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>, mut texture_atl
     commands.spawn(Camera2d);
     let texture = asset_server.load("player.png");
     let num_columns = 7;
-    let num_rows = 3; // right, left, up layers
+    let num_rows = 4; // right, left, up layers
     let layout = TextureAtlasLayout::from_grid(UVec2::splat(24), num_columns, num_rows, None, None);
     let layout_handle = texture_atlas_layouts.add(layout);
     commands.insert_resource(PlayerAsset {
