@@ -75,8 +75,22 @@ struct AnimationIndices {
     last: usize,
 }
 
-#[derive(Component, Deref, DerefMut)]
-struct AnimationTimer(Timer);
+// Change AnimationTimer to include fps.
+#[derive(Component)]
+struct AnimationTimer {
+    timer: Timer,
+    fps: f32,
+}
+
+impl AnimationTimer {
+    // Create a new AnimationTimer for a given fps.
+    fn new(fps: f32) -> Self {
+        Self {
+            timer: Timer::from_seconds(1.0 / fps, TimerMode::Repeating),
+            fps,
+        }
+    }
+}
 
 // New resource to hold the TextureAtlas handle
 #[derive(Resource)]
@@ -85,7 +99,7 @@ struct PlayerAsset {
     layout: Handle<TextureAtlasLayout>,
 }
 
-#[derive(Resource)]
+#[derive(Resource, Copy, Clone)]
 enum Direction {
     Left,
     Right,
@@ -128,17 +142,19 @@ impl Default for AnimationConfig {
 
 // New system to animate the sprite
 fn animate_sprite(time: Res<Time>, mut query: Query<(&AnimationIndices, &mut AnimationTimer, &mut Sprite)>) {
-    for (indices, mut timer, mut sprite) in &mut query {
-        timer.tick(time.delta());
-        if timer.just_finished() {
+    for (indices, mut anim_timer, mut sprite) in &mut query {
+        anim_timer.timer.tick(time.delta());
+        if anim_timer.timer.just_finished() {
             if let Some(atlas) = &mut sprite.texture_atlas {
-                // Ensure index is within the expected range.
                 if atlas.index < indices.first || atlas.index >= indices.last {
                     atlas.index = indices.first;
                 } else {
                     atlas.index += 1;
                 }
             }
+            // Reset timer duration in case the fps is changed in runtime.
+            let fps = anim_timer.fps;
+            anim_timer.timer.set_duration(Duration::from_secs_f32(1.0 / fps));
         }
     }
 }
@@ -153,64 +169,35 @@ fn update_direction_and_indices(
     animation_config: Res<AnimationConfig>,
     mut query: Query<&mut AnimationIndices, With<LocalPlayer>>,
 ) {
-    if player_input.left {
-        *last_direction = LastDirection(Some(Direction::Left));
-        let (first, last_val) = animation_config.run_left;
-        for mut indices in query.iter_mut() {
-            indices.first = first;
-            indices.last = last_val;
-        }
+    // Determine new direction & config if any input is active.
+    let new_update = if player_input.left {
+        Some((Direction::Left, animation_config.run_left))
     } else if player_input.right {
-        *last_direction = LastDirection(Some(Direction::Right));
-        let (first, last_val) = animation_config.run_right;
-        for mut indices in query.iter_mut() {
-            indices.first = first;
-            indices.last = last_val;
-        }
+        Some((Direction::Right, animation_config.run_right))
     } else if player_input.up {
-        *last_direction = LastDirection(Some(Direction::Up));
-        let (first, last_val) = animation_config.run_up;
-        for mut indices in query.iter_mut() {
-            indices.first = first;
-            indices.last = last_val;
-        }
+        Some((Direction::Up, animation_config.run_up))
     } else if player_input.down {
-        *last_direction = LastDirection(Some(Direction::Down));
-        let (first, last_val) = animation_config.run_down;
+        Some((Direction::Down, animation_config.run_down))
+    } else if let Some(dir) = last_direction.0 {
+        let idle_range = match dir {
+            Direction::Left => animation_config.idle_left,
+            Direction::Right => animation_config.idle_right,
+            Direction::Up => animation_config.idle_up,
+            Direction::Down => animation_config.idle_down,
+        };
+        Some((dir, idle_range))
+    } else {
+        None
+    };
+
+    if let Some((dir, (first, last_val))) = new_update {
+        // Update last_direction if new input was detected.
+        if player_input.left || player_input.right || player_input.up || player_input.down {
+            *last_direction = LastDirection(Some(dir));
+        }
         for mut indices in query.iter_mut() {
             indices.first = first;
             indices.last = last_val;
-        }
-    } else if let Some(dir) = &last_direction.0 {
-        match dir {
-            Direction::Left => {
-                let (first, last_val) = animation_config.idle_left;
-                for mut indices in query.iter_mut() {
-                    indices.first = first;
-                    indices.last = last_val;
-                }
-            }
-            Direction::Right => {
-                let (first, last_val) = animation_config.idle_right;
-                for mut indices in query.iter_mut() {
-                    indices.first = first;
-                    indices.last = last_val;
-                }
-            }
-            Direction::Up => {
-                let (first, last_val) = animation_config.idle_up;
-                for mut indices in query.iter_mut() {
-                    indices.first = first;
-                    indices.last = last_val;
-                }
-            }
-            Direction::Down => {
-                let (first, last_val) = animation_config.idle_down;
-                for mut indices in query.iter_mut() {
-                    indices.first = first;
-                    indices.last = last_val;
-                }
-            }
         }
     }
 }
@@ -225,39 +212,41 @@ fn update_remote_player_animation(
     animation_config: Res<AnimationConfig>,
 ) {
     let threshold = 0.01;
+    // Helper closure to compute idle range based on previous running state.
+    let idle_range = |current: usize| -> (usize, usize) {
+        if current == animation_config.run_right.0 {
+            animation_config.idle_right
+        } else if current == animation_config.run_left.0 {
+            animation_config.idle_left
+        } else if current == animation_config.run_up.0 {
+            animation_config.idle_up
+        } else if current == animation_config.run_down.0 {
+            animation_config.idle_down
+        } else {
+            (current, current)
+        }
+    };
+
     for (transform, mut indices, mut prev) in query.iter_mut() {
         let delta = transform.translation - prev.0;
         if delta.length() > threshold {
-            if delta.x.abs() > delta.y.abs() {
+            let new_range = if delta.x.abs() > delta.y.abs() {
                 if delta.x > 0.0 {
-                    indices.first = animation_config.run_right.0;
-                    indices.last = animation_config.run_right.1;
+                    animation_config.run_right
                 } else {
-                    indices.first = animation_config.run_left.0;
-                    indices.last = animation_config.run_left.1;
+                    animation_config.run_left
                 }
             } else if delta.y > 0.0 {
-                indices.first = animation_config.run_up.0;
-                indices.last = animation_config.run_up.1;
-            } else if delta.y < 0.0 {
-                indices.first = animation_config.run_down.0;
-                indices.last = animation_config.run_down.1;
-            }
+                animation_config.run_up
+            } else {
+                animation_config.run_down
+            };
+            indices.first = new_range.0;
+            indices.last = new_range.1;
         } else {
-            // When not moving, fallback to idle state based on previous movement.
-            if indices.first == animation_config.run_right.0 {
-                indices.first = animation_config.idle_right.0;
-                indices.last = animation_config.idle_right.1;
-            } else if indices.first == animation_config.run_left.0 {
-                indices.first = animation_config.idle_left.0;
-                indices.last = animation_config.idle_left.1;
-            } else if indices.first == animation_config.run_up.0 {
-                indices.first = animation_config.idle_up.0;
-                indices.last = animation_config.idle_up.1;
-            } else if indices.first == animation_config.run_down.0 {
-                indices.first = animation_config.idle_down.0;
-                indices.last = animation_config.idle_down.1;
-            }
+            let (idle_first, idle_last) = idle_range(indices.first);
+            indices.first = idle_first;
+            indices.last = idle_last;
         }
         prev.0 = transform.translation;
     }
@@ -296,7 +285,10 @@ fn main() {
             )
             // NEW: update remote players animation (only those without LocalPlayer)
             .add_systems(Update, update_remote_player_animation.run_if(client_connected))
-            .add_systems(Update, (reconnect_on_error_system, reconnect_check_system, exit_system));
+            .add_systems(
+                Update,
+                (network_error_reconnect_system, periodic_connection_checker_system, exit_system),
+            );
     } else {
         // Local mode: spawn local player, update input, then move the player.
         app.add_systems(Startup, setup)
@@ -375,28 +367,18 @@ fn client_sync_players(
         let server_message: ServerMessages = bincode::deserialize(&message).unwrap();
         match server_message {
             ServerMessages::PlayerConnected { id, color: _ } => {
-                info!("Player {} connected.", id);
-                let mut sprite = Sprite::from_atlas_image(
-                    player_asset.texture.clone(),
-                    TextureAtlas {
-                        layout: player_asset.layout.clone(),
-                        index: 1,
-                    },
-                );
-                sprite.custom_size = Some(settings.sprite_size);
-                let (first, last_val) = anim_config.idle_right;
-                // Spawn bundle for remote player.
-                let transform = Transform::from_scale(Vec3::splat(6.0));
+                let sprite = create_sprite(&player_asset, &settings, 1);
+                let transform = default_player_transform();
+                let (animation_indices, anim_timer) = create_animation_components(&anim_config);
+                // Spawn remote player with a PreviousTransform.
                 let bundle = (
                     sprite,
                     transform,
-                    AnimationIndices { first, last: last_val },
-                    AnimationTimer(Timer::from_seconds(0.1, TimerMode::Repeating)),
-                    // Add PreviousTransform with initial translation.
+                    animation_indices,
+                    anim_timer,
                     PreviousTransform(transform.translation),
                 );
                 let player_entity = commands.spawn(bundle).id();
-                // If this client is local, add the LocalPlayer marker.
                 if id == *CLIENT_ID {
                     commands.entity(player_entity).insert(LocalPlayer);
                 }
@@ -416,33 +398,23 @@ fn client_sync_players(
         for (player_id, (translation, _color)) in players.iter() {
             let new_translation = Vec3::new(translation[0], -translation[2], 0.0);
             if let Some(&player_entity) = lobby.players.get(player_id) {
-                // Only update transform
                 commands.entity(player_entity).insert(Transform {
                     translation: new_translation,
                     ..Default::default()
                 });
             } else if !initial_sync.0 {
-                let mut sprite = Sprite::from_atlas_image(
-                    player_asset.texture.clone(),
-                    TextureAtlas {
-                        layout: player_asset.layout.clone(),
-                        index: 1,
-                    },
-                );
-                sprite.custom_size = Some(settings.sprite_size);
-                let (first, last_val) = anim_config.idle_right;
-                // Spawn using idle indices.
+                let sprite = create_sprite(&player_asset, &settings, 1);
+                let (animation_indices, anim_timer) = create_animation_components(&anim_config);
                 let transform = Transform {
                     translation: new_translation,
-                    scale: Vec3::splat(6.0),
-                    ..Default::default()
+                    ..default_player_transform()
                 };
                 let player_entity = commands
                     .spawn((
                         sprite,
                         transform,
-                        AnimationIndices { first, last: last_val },
-                        AnimationTimer(Timer::from_seconds(0.1, TimerMode::Repeating)),
+                        animation_indices,
+                        anim_timer,
                         PreviousTransform(transform.translation),
                     ))
                     .id();
@@ -458,7 +430,7 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>, mut texture_atl
     commands.spawn(Camera2d);
     let texture = asset_server.load("player.png");
     let num_columns = 7;
-    let num_rows = 4; // right, left, up layers
+    let num_rows = 4; // right, left, up, down layers
     let layout = TextureAtlasLayout::from_grid(UVec2::splat(24), num_columns, num_rows, None, None);
     let layout_handle = texture_atlas_layouts.add(layout);
     commands.insert_resource(PlayerAsset {
@@ -492,80 +464,52 @@ fn client_send_input(player_input: Res<PlayerInput>, mut client: ResMut<RenetCli
     client.send_message(DefaultChannel::ReliableOrdered, input_message);
 }
 
-/// Reconnect to the server if an error occurs
+/// Attempts to perform a full reconnection by removing outdated networking resources
+/// and inserting new client and transport resources using default client settings.
+fn perform_reconnect(commands: &mut Commands) {
+    // Remove existing networking resources.
+    commands.remove_resource::<RenetClient>();
+    commands.remove_resource::<NetcodeClientTransport>();
+    // Create and insert new networking resources.
+    let (new_client, new_transport) = new_renet_client(&ClientSettings::default());
+    commands.insert_resource(new_client);
+    commands.insert_resource(new_transport);
+    println!("✅ Successfully reconnected to the server.");
+}
+
+/// System that listens for network transport errors and attempts a reconnection when one is detected.
+/// It triggers at most once per second to avoid repeated reconnection attempts.
 #[allow(clippy::never_loop)]
-fn reconnect_on_error_system(
+fn network_error_reconnect_system(
     mut commands: Commands,
-    mut renet_error: EventReader<NetcodeTransportError>,
+    mut transport_errors: EventReader<NetcodeTransportError>,
     time: Res<Time>,
-    mut last_check: Local<f64>,
+    mut last_attempt: Local<f64>,
 ) {
-    // Only check once per second
-    if time.elapsed_secs_f64() - *last_check < 1.0 {
+    if time.elapsed_secs_f64() - *last_attempt < 1.0 {
         return;
     }
-    *last_check = time.elapsed_secs_f64();
+    *last_attempt = time.elapsed_secs_f64();
 
-    for e in renet_error.read() {
-        error!("⚠️ Connection lost: {:?}", e);
-
-        // Attempt to reconnect
-        println!("🔄 Attempting to reconnect...");
-
-        // Remove the old client resources
-        commands.remove_resource::<RenetClient>();
-        commands.remove_resource::<NetcodeClientTransport>();
-
-        // Create a new client and transport
-        let (new_client, new_transport) = new_renet_client(&ClientSettings {
-            max_retries: 10,
-            initial_delay: Duration::from_secs(1),
-            server_ip: env::var("SERVER_IP").unwrap_or_else(|_| "127.0.0.1".to_string()),
-            server_port: env::var("SERVER_PORT").unwrap_or_else(|_| "5000".to_string()),
-            sprite_size: Vec2::new(64.0, 64.0),
-        });
-
-        // Re-insert the new client resources
-        commands.insert_resource(new_client);
-        commands.insert_resource(new_transport);
-
-        println!("✅ Reconnection attempt completed.");
+    for error in transport_errors.read() {
+        error!("⚠️ Network transport error detected: {:?}", error);
+        println!("🔄 Initiating reconnection due to network error...");
+        perform_reconnect(&mut commands);
     }
 }
 
-/// Check the system to see if the client is connected
-fn reconnect_check_system(mut commands: Commands, client: Res<RenetClient>, time: Res<Time>, mut last_check: Local<f64>) {
-    // Only check once per second
+/// Periodically checks the client's connection status and triggers a reconnection if not connected.
+/// This system limits reconnection attempts to at most once per second.
+fn periodic_connection_checker_system(mut commands: Commands, client: Res<RenetClient>, time: Res<Time>, mut last_check: Local<f64>) {
     if time.elapsed_secs_f64() - *last_check < 1.0 {
         return;
     }
     *last_check = time.elapsed_secs_f64();
 
-    // 🔹 Prevent reconnecting if already connected
-    if client.is_connected() {
-        return;
+    if !client.is_connected() {
+        println!("⚠️ Connection lost. Initiating periodic reconnection check...");
+        perform_reconnect(&mut commands);
     }
-
-    println!("⚠️ Connection lost. Attempting to reconnect...");
-
-    // Remove old client
-    commands.remove_resource::<RenetClient>();
-    commands.remove_resource::<NetcodeClientTransport>();
-
-    // Create a new client and transport
-    let (new_client, new_transport) = new_renet_client(&ClientSettings {
-        max_retries: 10,
-        initial_delay: Duration::from_secs(1),
-        server_ip: env::var("SERVER_IP").unwrap_or_else(|_| "127.0.0.1".to_string()),
-        server_port: env::var("SERVER_PORT").unwrap_or_else(|_| "5000".to_string()),
-        sprite_size: Vec2::new(64.0, 64.0),
-    });
-
-    // Reinsert the new client
-    commands.insert_resource(new_client);
-    commands.insert_resource(new_transport);
-
-    println!("✅ Reconnected to server!");
 }
 
 /// For local simulation, add a simple system that updates transformations using local input
@@ -582,26 +526,19 @@ fn local_move_players_system(mut query: Query<(&mut Transform, &PlayerInput)>, t
 fn local_spawn_player(mut commands: Commands, mut lobby: ResMut<Lobby>, player_asset: Res<PlayerAsset>, anim_config: Res<AnimationConfig>) {
     if lobby.players.is_empty() {
         let local_client_id: ClientId = 0;
-        let sprite = Sprite::from_atlas_image(
-            player_asset.texture.clone(),
-            TextureAtlas {
-                layout: player_asset.layout.clone(),
-                index: 1,
-            },
+        let sprite = create_sprite(&player_asset, &ClientSettings::default(), 1);
+        let (animation_indices, anim_timer) = create_animation_components(&anim_config);
+        let bundle = (
+            sprite,
+            default_player_transform(),
+            PlayerInput::default(),
+            animation_indices,
+            anim_timer,
+            LocalPlayer,
         );
-        let (first, last_val) = anim_config.idle_right; // default idle for local player.
-        let player_entity = commands
-            .spawn((
-                sprite,
-                Transform::from_scale(Vec3::splat(6.0)),
-                PlayerInput::default(),
-                AnimationIndices { first, last: last_val },
-                AnimationTimer(Timer::from_seconds(0.1, TimerMode::Repeating)),
-                LocalPlayer, // marker added here
-            ))
-            .id();
+        let player_entity = commands.spawn(bundle).id();
         lobby.players.insert(local_client_id, player_entity);
-        info!("Spawned local player with id {} using idle right: index {}", local_client_id, first);
+        info!("Spawned local player with id {}.", local_client_id);
     }
 }
 
@@ -612,4 +549,28 @@ fn local_update_player_input(player_input_res: Res<PlayerInput>, lobby: Res<Lobb
             *component = player_input_res.clone();
         }
     }
+}
+
+/// Returns the default transform used for players.
+fn default_player_transform() -> Transform {
+    Transform::from_scale(Vec3::splat(6.0))
+}
+
+/// Creates a Sprite from the player asset with the given starting index and applies the sprite size.
+fn create_sprite(player_asset: &PlayerAsset, settings: &ClientSettings, index: usize) -> Sprite {
+    let mut sprite = Sprite::from_atlas_image(
+        player_asset.texture.clone(),
+        TextureAtlas {
+            layout: player_asset.layout.clone(),
+            index,
+        },
+    );
+    sprite.custom_size = Some(settings.sprite_size);
+    sprite
+}
+
+/// Creates default animation components using the idle_right configuration.
+fn create_animation_components(anim_config: &AnimationConfig) -> (AnimationIndices, AnimationTimer) {
+    let (first, last_val) = anim_config.idle_right;
+    (AnimationIndices { first, last: last_val }, AnimationTimer::new(10.0))
 }
