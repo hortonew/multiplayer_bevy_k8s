@@ -139,11 +139,14 @@ fn animate_sprite(time: Res<Time>, mut query: Query<(&AnimationIndices, &mut Ani
 }
 
 // Composite system to update AnimationIndices based on player input and LastDirection.
+#[derive(Component)]
+struct LocalPlayer;
+
 fn update_direction_and_indices(
     player_input: Res<PlayerInput>,
     mut last_direction: ResMut<LastDirection>,
     animation_config: Res<AnimationConfig>,
-    mut query: Query<&mut AnimationIndices>,
+    mut query: Query<&mut AnimationIndices, With<LocalPlayer>>,
 ) {
     if player_input.left {
         *last_direction = LastDirection(Some(Direction::Left));
@@ -193,6 +196,53 @@ fn update_direction_and_indices(
     }
 }
 
+// New component to track previous transform for remote players.
+#[derive(Component)]
+struct PreviousTransform(Vec3);
+
+// New system to update remote players' animations based on movement.
+fn update_remote_player_animation(
+    mut query: Query<(&Transform, &mut AnimationIndices, &mut PreviousTransform), Without<LocalPlayer>>,
+    animation_config: Res<AnimationConfig>,
+) {
+    let threshold = 0.01;
+    for (transform, mut indices, mut prev) in query.iter_mut() {
+        let delta = transform.translation - prev.0;
+        if delta.length() > threshold {
+            // Determine dominant axis.
+            if delta.x.abs() > delta.y.abs() {
+                if delta.x > 0.0 {
+                    indices.first = animation_config.run_right.0;
+                    indices.last = animation_config.run_right.1;
+                } else {
+                    indices.first = animation_config.run_left.0;
+                    indices.last = animation_config.run_left.1;
+                }
+            } else if delta.y > 0.0 {
+                indices.first = animation_config.run_up.0;
+                indices.last = animation_config.run_up.1;
+            } else {
+                // For down, default to idle_right.
+                indices.first = animation_config.idle_right.0;
+                indices.last = animation_config.idle_right.1;
+            }
+        } else {
+            // Not moving: decide idle based on current indices.
+            if indices.first == animation_config.run_right.0 {
+                indices.first = animation_config.idle_right.0;
+                indices.last = animation_config.idle_right.1;
+            } else if indices.first == animation_config.run_left.0 {
+                indices.first = animation_config.idle_left.0;
+                indices.last = animation_config.idle_left.1;
+            } else if indices.first == animation_config.run_up.0 {
+                indices.first = animation_config.idle_up.0;
+                indices.last = animation_config.idle_up.1;
+            }
+        }
+        prev.0 = transform.translation;
+    }
+}
+
 /// Run bevy client
 fn main() {
     let client_settings = ClientSettings::default();
@@ -224,6 +274,8 @@ fn main() {
                 Update,
                 (player_input, client_send_input, client_sync_players, update_direction_and_indices).run_if(client_connected),
             )
+            // NEW: update remote players animation (only those without LocalPlayer)
+            .add_systems(Update, update_remote_player_animation.run_if(client_connected))
             .add_systems(Update, (reconnect_on_error_system, reconnect_check_system, exit_system));
     } else {
         // Local mode: spawn local player, update input, then move the player.
@@ -313,14 +365,21 @@ fn client_sync_players(
                 );
                 sprite.custom_size = Some(settings.sprite_size);
                 let (first, last_val) = anim_config.idle_right;
-                let player_entity = commands
-                    .spawn((
-                        sprite,
-                        Transform::from_scale(Vec3::splat(6.0)),
-                        AnimationIndices { first, last: last_val },
-                        AnimationTimer(Timer::from_seconds(0.1, TimerMode::Repeating)),
-                    ))
-                    .id();
+                // Spawn bundle for remote player.
+                let transform = Transform::from_scale(Vec3::splat(6.0));
+                let bundle = (
+                    sprite,
+                    transform,
+                    AnimationIndices { first, last: last_val },
+                    AnimationTimer(Timer::from_seconds(0.1, TimerMode::Repeating)),
+                    // Add PreviousTransform with initial translation.
+                    PreviousTransform(transform.translation),
+                );
+                let player_entity = commands.spawn(bundle).id();
+                // If this client is local, add the LocalPlayer marker.
+                if id == *CLIENT_ID {
+                    commands.entity(player_entity).insert(LocalPlayer);
+                }
                 lobby.players.insert(id, player_entity);
             }
             ServerMessages::PlayerDisconnected { id } => {
@@ -353,16 +412,18 @@ fn client_sync_players(
                 sprite.custom_size = Some(settings.sprite_size);
                 let (first, last_val) = anim_config.idle_right;
                 // Spawn using idle indices.
+                let transform = Transform {
+                    translation: new_translation,
+                    scale: Vec3::splat(6.0),
+                    ..Default::default()
+                };
                 let player_entity = commands
                     .spawn((
                         sprite,
-                        Transform {
-                            translation: new_translation,
-                            scale: Vec3::splat(6.0),
-                            ..Default::default()
-                        },
+                        transform,
                         AnimationIndices { first, last: last_val },
                         AnimationTimer(Timer::from_seconds(0.1, TimerMode::Repeating)),
+                        PreviousTransform(transform.translation),
                     ))
                     .id();
                 lobby.players.insert(*player_id, player_entity);
@@ -516,6 +577,7 @@ fn local_spawn_player(mut commands: Commands, mut lobby: ResMut<Lobby>, player_a
                 PlayerInput::default(),
                 AnimationIndices { first, last: last_val },
                 AnimationTimer(Timer::from_seconds(0.1, TimerMode::Repeating)),
+                LocalPlayer, // marker added here
             ))
             .id();
         lobby.players.insert(local_client_id, player_entity);
