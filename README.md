@@ -15,7 +15,11 @@ The networking client/server example was taken from the [bevy_renet examples](ht
 
 Warning: This is not production ready, but I hope to keep adding examples on how to scale out the game servers, maintain state, reduce reconnects, etc.
 
+3d Example
 ![Example](/images/example.gif)
+
+2d Example
+![Example 2d](/images/example-2d.gif)
 
 ## Run it
 
